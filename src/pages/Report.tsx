@@ -1,3 +1,38 @@
+/*
+  [추후 백엔드/API 연동 예정]
+
+  Report 페이지는 테스트 종료 후 수집된 로그, 탐지 이슈, 시스템 상태를 기반으로
+  최종 분석 결과를 시각화하는 페이지입니다.
+
+  현재는 UI 프로토타입 단계이므로
+  요약 카드, 이슈 목록, 시스템 메트릭, 액션 타임라인이 모두 mock 데이터로 구성되어 있습니다.
+
+  실제 구현 시에는 아래와 같은 흐름으로 백엔드와 연동할 예정입니다.
+
+  1. Monitor 페이지에서 테스트 종료 또는 리포트 생성 요청
+     POST /api/test/{sessionId}/report
+
+  2. 백엔드에서 해당 세션 기준 리포트 데이터 생성
+
+  3. Report 페이지 진입 시 sessionId 또는 testId 기반으로
+     리포트 상세 데이터 조회
+
+     GET /api/test/{sessionId}/report
+
+  4. 조회한 데이터를 기반으로
+     - 요약 카드
+     - 탐지된 이슈 목록
+     - 시스템 메트릭
+     - 액션 타임라인
+     - 리스크 점수
+     등을 실제 분석 결과로 렌더링
+
+  5. 필요 시 PDF 내보내기 기능 추가
+     GET /api/test/{sessionId}/report/export
+     또는
+     POST /api/test/{sessionId}/report/export
+*/
+
 import { useLocation, useNavigate } from 'react-router-dom'
 import '../styles/report.css'
 
@@ -10,11 +45,28 @@ function Report() {
   const navigate = useNavigate()
   const location = useLocation()
 
+  /*
+    TODO:
+    현재는 monitor 페이지에서 전달받은 createdAt, testId만 사용하고 있습니다.
+
+    실제 구현 시에는 여기서 sessionId 또는 testId를 받아
+    해당 리포트 데이터를 조회하는 기준값으로 사용할 예정입니다.
+  */
   const reportData: ReportState = (location.state as ReportState | null) || {
     createdAt: '2026.03.18',
     testId: '123456789',
   }
 
+  /*
+    TODO:
+    현재는 리포트 상단 요약 카드 UI를 보여주기 위한 mock 데이터입니다.
+
+    실제 구현 시에는 백엔드 리포트 응답값을 기반으로
+    총 탐색 단계 수, 치명 이슈 수, 경고 수, 성공 요청 수 등을 표시할 예정입니다.
+
+    API 예정:
+    GET /api/test/{sessionId}/report
+  */
   const summaryCards = [
     { label: '총 탐색 단계', value: '27', tone: 'neutral' },
     { label: '탐지된 치명 이슈', value: '01', tone: 'danger' },
@@ -22,6 +74,18 @@ function Report() {
     { label: '성공 요청 수', value: '18', tone: 'success' },
   ]
 
+  /*
+    TODO:
+    현재는 탐지 이슈 목록 UI를 위한 mock 데이터입니다.
+
+    실제 구현 시에는 백엔드 분석 결과를 기반으로
+    이슈 심각도, 설명, 위치, 영향도를 동적으로 렌더링할 예정입니다.
+
+    API 예정:
+    GET /api/test/{sessionId}/report
+    또는
+    GET /api/test/{sessionId}/issues
+  */
   const issueList = [
     {
       level: 'Critical',
@@ -49,6 +113,18 @@ function Report() {
     },
   ]
 
+  /*
+    TODO:
+    현재는 탐색 흐름 요약 UI를 위한 mock 로그 데이터입니다.
+
+    실제 구현 시에는 세션별 탐색 로그 또는 리포트에 포함된 timeline 데이터를
+    백엔드에서 받아와 렌더링할 예정입니다.
+
+    API 예정:
+    GET /api/test/{sessionId}/report
+    또는
+    GET /api/test/{sessionId}/logs
+  */
   const actionLogs = [
     '[Navigate] Navigated to /home',
     '[Action] Clicked "Products" navigation link',
@@ -84,6 +160,11 @@ function Report() {
           </div>
 
           <div className="report-title-actions">
+            {/* TODO:
+                실제 구현 시 백엔드 PDF export API와 연동 예정
+                예:
+                GET /api/test/{sessionId}/report/export
+            */}
             <button className="export-button">Export PDF</button>
           </div>
         </section>

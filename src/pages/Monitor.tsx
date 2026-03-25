@@ -1,3 +1,44 @@
+/*
+  [추후 백엔드/API 연동 예정]
+
+  Monitor 페이지는 웹 테스트 실행 중 발생하는 상태를
+  실시간으로 시각화하는 페이지입니다.
+
+  현재는 UI 프로토타입 단계이기 때문에
+  테스트 진행률, 로그, 탐지 이슈 등이 모두 mock 데이터로 구성되어 있습니다.
+
+  실제 백엔드 연동 시 아래와 같은 흐름으로 동작할 예정입니다.
+
+  1. Home 페이지에서 테스트 시작 요청
+     POST /api/test/start
+
+  2. 백엔드에서 테스트 세션 생성 후 sessionId 반환
+
+  3. Monitor 페이지 진입 시 sessionId 기반으로
+     테스트 상태 조회
+
+     GET /api/test/{sessionId}/status
+
+  4. 주기적으로 테스트 진행률 및 상태 업데이트
+
+     GET /api/test/{sessionId}/progress
+
+  5. 실시간 로그 스트리밍 또는 polling
+
+     GET /api/test/{sessionId}/logs
+
+  6. 탐지된 버그 / UI 오류 조회
+
+     GET /api/test/{sessionId}/issues
+
+  7. 테스트 종료 후 리포트 생성
+
+     POST /api/test/{sessionId}/report
+
+  현재 useEffect 내부의 setInterval 로직은
+  실제 API polling 로직을 시뮬레이션하기 위한 코드입니다.
+*/
+
 import { useEffect, useMemo, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import '../styles/monitor.css'
@@ -44,6 +85,16 @@ const sceneMeta: Record<
   },
 }
 
+/*
+  TODO:
+  현재는 UI 테스트용 mock 로그 데이터입니다.
+
+  실제 구현 시에는 백엔드 로그 API에서 데이터를 받아와
+  탐색 로그를 표시할 예정입니다.
+
+  API 예정:
+  GET /api/test/{sessionId}/logs
+*/
 const stagedLogs: LiveLog[] = [
   { time: '10:23:45', label: 'Navigate', message: 'Navigated to /home' },
   { time: '10:23:47', label: 'Action', message: 'Clicked "Products" navigation link' },
@@ -57,6 +108,16 @@ const stagedLogs: LiveLog[] = [
   { time: '10:24:09', label: 'State', message: 'Checkout DOM stabilized after retry' },
 ]
 
+/*
+  TODO:
+  현재는 버그 탐지 UI를 보여주기 위한 mock 데이터입니다.
+
+  실제 구현 시에는 백엔드 분석 결과를 기반으로
+  탐지된 이슈 목록을 표시하게 됩니다.
+
+  API 예정:
+  GET /api/test/{sessionId}/issues
+*/
 const stagedIssues: Issue[] = [
   {
     id: 1,
@@ -87,6 +148,23 @@ function Monitor() {
   const [sceneIndex, setSceneIndex] = useState(0)
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
 
+  /*
+    TODO:
+    현재는 테스트 진행률을 시뮬레이션하기 위해
+    setInterval을 사용하여 mock 데이터를 업데이트하고 있습니다.
+
+    실제 구현 시에는 아래 방식으로 변경될 예정입니다.
+
+    - API polling 방식
+      GET /api/test/{sessionId}/progress
+
+    또는
+
+    - WebSocket 기반 실시간 업데이트
+
+    이를 통해 테스트 진행률, 로그, 탐지 이슈 상태가
+    실제 백엔드 데이터와 동기화됩니다.
+  */
   useEffect(() => {
     if (isStopped || progress >= 100) return
 
