@@ -1,0 +1,62 @@
+.report-page {
+  min-height: 100vh;
+  background: #f3f3f3;
+  padding: 20px 18px 0;
+}
+
+.report-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 38px;
+}
+
+.report-menu-button {
+  border: none;
+  background: transparent;
+  font-size: 24px;
+  cursor: pointer;
+  color: #111;
+}
+
+.report-brand {
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  color: #111;
+}
+
+.report-main {
+  padding: 8px 46px;
+}
+
+.report-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.report-title {
+  font-size: 26px;
+  font-weight: 800;
+  color: #111;
+  margin-bottom: 6px;
+}
+
+.report-subtitle {
+  font-size: 14px;
+  color: #333;
+}
+
+.export-button {
+  min-width: 116px;
+  height: 42px;
+  padding: 0 20px;
+  border: none;
+  border-radius: 999px;
+  background: #000;
+  color: #fff;
+  font-size: 15px;
+  cursor: pointer;
+}
