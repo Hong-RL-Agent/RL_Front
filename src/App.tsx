@@ -4,6 +4,7 @@ import Login from './pages/Login'
 import Signup from './pages/Signup'
 import Monitor from './pages/Monitor'
 import Report from './pages/Report'
+import AdminDashboard from './pages/AdminDashboard'
 
 function App() {
   return (
@@ -14,6 +15,8 @@ function App() {
         <Route path="/signup" element={<Signup />} />
         <Route path="/monitor" element={<Monitor />} />
         <Route path="/report" element={<Report />} />
+
+        <Route path="/admin/dashboard" element={<AdminDashboard />} />
       </Routes>
     </BrowserRouter>
   )

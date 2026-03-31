@@ -57,3 +57,22 @@
   text-align: center;
   margin-top: 8px;
 }
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.auth-error-message {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: #ef4444;
+  text-align: left;
+}
+
+.admin-login-guide {
+  margin-top: 12px;
+  font-size: 13px;
+  color: #64748b;
+}
