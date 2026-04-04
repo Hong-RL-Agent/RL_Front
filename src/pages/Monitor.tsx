@@ -14,32 +14,26 @@
 
   2. 백엔드에서 테스트 세션 생성 후 sessionId 반환
 
-  3. Monitor 페이지 진입 시 sessionId 기반으로
-     테스트 상태 조회
-
+  3. Monitor 페이지 진입 시 sessionId 기반으로 테스트 상태 조회
      GET /api/test/{sessionId}/status
 
   4. 주기적으로 테스트 진행률 및 상태 업데이트
-
      GET /api/test/{sessionId}/progress
 
   5. 실시간 로그 스트리밍 또는 polling
-
      GET /api/test/{sessionId}/logs
 
   6. 탐지된 버그 / UI 오류 조회
-
      GET /api/test/{sessionId}/issues
 
   7. 테스트 종료 후 리포트 생성
-
      POST /api/test/{sessionId}/report
 
-  현재 useEffect 내부의 setInterval 로직은
-  실제 API polling 로직을 시뮬레이션하기 위한 코드입니다.
+  8. 리포트 생성 완료 후 report 페이지로 이동
+     또는 메일 발송 상태 표시
 */
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import '../styles/monitor.css'
 
@@ -85,16 +79,6 @@ const sceneMeta: Record<
   },
 }
 
-/*
-  TODO:
-  현재는 UI 테스트용 mock 로그 데이터입니다.
-
-  실제 구현 시에는 백엔드 로그 API에서 데이터를 받아와
-  탐색 로그를 표시할 예정입니다.
-
-  API 예정:
-  GET /api/test/{sessionId}/logs
-*/
 const stagedLogs: LiveLog[] = [
   { time: '10:23:45', label: 'Navigate', message: 'Navigated to /home' },
   { time: '10:23:47', label: 'Action', message: 'Clicked "Products" navigation link' },
@@ -108,16 +92,6 @@ const stagedLogs: LiveLog[] = [
   { time: '10:24:09', label: 'State', message: 'Checkout DOM stabilized after retry' },
 ]
 
-/*
-  TODO:
-  현재는 버그 탐지 UI를 보여주기 위한 mock 데이터입니다.
-
-  실제 구현 시에는 백엔드 분석 결과를 기반으로
-  탐지된 이슈 목록을 표시하게 됩니다.
-
-  API 예정:
-  GET /api/test/{sessionId}/issues
-*/
 const stagedIssues: Issue[] = [
   {
     id: 1,
@@ -147,36 +121,84 @@ function Monitor() {
   const [visibleLogCount, setVisibleLogCount] = useState(2)
   const [sceneIndex, setSceneIndex] = useState(0)
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
+  const [showCompleteModal, setShowCompleteModal] = useState(false)
+  const [hasCompleted, setHasCompleted] = useState(false)
 
-  /*
-    TODO:
-    현재는 테스트 진행률을 시뮬레이션하기 위해
-    setInterval을 사용하여 mock 데이터를 업데이트하고 있습니다.
+  const progressRef = useRef(8)
+  const hideModalTimerRef = useRef<number | null>(null)
+  const navigateTimerRef = useRef<number | null>(null)
+  const completionTriggeredRef = useRef(false)
 
-    실제 구현 시에는 아래 방식으로 변경될 예정입니다.
+  const isCompleted = hasCompleted || progress >= 100
 
-    - API polling 방식
-      GET /api/test/{sessionId}/progress
-
-    또는
-
-    - WebSocket 기반 실시간 업데이트
-
-    이를 통해 테스트 진행률, 로그, 탐지 이슈 상태가
-    실제 백엔드 데이터와 동기화됩니다.
-  */
   useEffect(() => {
-    if (isStopped || progress >= 100) return
+    if (isStopped || isCompleted) return
 
     const timer = window.setInterval(() => {
+      const nextProgress = Math.min(
+        progressRef.current + Math.floor(Math.random() * 8 + 4),
+        100
+      )
+
+      progressRef.current = nextProgress
+
       setElapsedSeconds((prev) => prev + 1)
-      setProgress((prev) => Math.min(prev + Math.floor(Math.random() * 8 + 4), 100))
+      setProgress(nextProgress)
+
+      if (nextProgress >= 100) {
+        if (!completionTriggeredRef.current) {
+          completionTriggeredRef.current = true
+          setHasCompleted(true)
+          setIsStopped(true)
+          setVisibleLogCount(stagedLogs.length)
+          setSceneIndex(frameSequence.length - 1)
+          setShowCompleteModal(true)
+        }
+        return
+      }
+
       setVisibleLogCount((prev) => Math.min(prev + 1, stagedLogs.length))
       setSceneIndex((prev) => Math.min(prev + 1, frameSequence.length - 1))
     }, 1800)
 
     return () => window.clearInterval(timer)
-  }, [isStopped, progress])
+  }, [isStopped, isCompleted])
+
+  useEffect(() => {
+    if (!showCompleteModal) return
+
+    hideModalTimerRef.current = window.setTimeout(() => {
+      setShowCompleteModal(false)
+    }, 2200)
+
+    navigateTimerRef.current = window.setTimeout(() => {
+      navigate('/report', {
+        state: {
+          createdAt: '2026.03.18',
+          testId: '123456789',
+          targetUrl,
+          status: 'completed',
+        },
+      })
+    }, 2600)
+
+    return () => {
+      if (hideModalTimerRef.current) {
+        window.clearTimeout(hideModalTimerRef.current)
+      }
+    }
+  }, [showCompleteModal, navigate, targetUrl])
+
+  useEffect(() => {
+    return () => {
+      if (hideModalTimerRef.current) {
+        window.clearTimeout(hideModalTimerRef.current)
+      }
+      if (navigateTimerRef.current) {
+        window.clearTimeout(navigateTimerRef.current)
+      }
+    }
+  }, [])
 
   const visibleLogs = stagedLogs.slice(0, visibleLogCount)
 
@@ -189,15 +211,66 @@ function Monitor() {
   const currentScene = frameSequence[sceneIndex]
   const criticalCount = visibleIssues.filter((issue) => issue.type === 'error').length
   const warningCount = visibleIssues.filter((issue) => issue.type === 'warning').length
+  const totalIssueCount = criticalCount + warningCount
 
   const consoleErrorCount = visibleLogs.filter((log) => log.label === 'Error').length
   const failedRequestCount = visibleLogs.filter((log) => log.label === 'Network').length
 
+  const handleStop = () => {
+    if (isCompleted) return
+    setIsStopped(true)
+  }
+
+  const handleRestart = () => {
+    if (isCompleted) return
+    progressRef.current = progress
+    setIsStopped(false)
+  }
+
+  const handleGoReportNow = () => {
+    if (hideModalTimerRef.current) {
+      window.clearTimeout(hideModalTimerRef.current)
+    }
+    if (navigateTimerRef.current) {
+      window.clearTimeout(navigateTimerRef.current)
+    }
+
+    setShowCompleteModal(false)
+
+    navigate('/report', {
+      state: {
+        createdAt: '2026.03.18',
+        testId: '123456789',
+        targetUrl,
+        status: 'completed',
+      },
+    })
+  }
+
   return (
     <div className="monitor-page">
+      {showCompleteModal && (
+        <div className="completion-modal-backdrop">
+          <div className="completion-modal">
+            <div className="completion-modal-badge">Test Completed</div>
+            <h2 className="completion-modal-title">웹 탐색이 완료되었습니다.</h2>
+            <p className="completion-modal-desc">
+              테스트가 정상적으로 종료되었습니다.
+              <br />
+              레포트는 등록된 메일로 전송될 예정이며, 잠시 후 결과 페이지로 이동합니다.
+            </p>
+
+            <button className="completion-modal-button" onClick={handleGoReportNow}>
+              바로 레포트 보기
+            </button>
+          </div>
+        </div>
+      )}
+
       <header className="monitor-header">
-        <button className="monitor-menu" aria-label="홈으로 이동" onClick={() => navigate('/')}>
-          ☰
+        <button className="monitor-back" onClick={() => navigate(-1)}>
+          <span className="monitor-back-arrow">←</span>
+          <span>Back</span>
         </button>
 
         <strong className="monitor-brand">J.A.W.S</strong>
@@ -205,26 +278,43 @@ function Monitor() {
 
       <main className="monitor-main">
         <div className="monitor-container">
-          <section className="headline-row">
-            <div className="headline-left">
+          <section className="monitor-topbar">
+            <div className="monitor-topbar-left">
+              <p className="monitor-eyebrow">Live Test Session</p>
               <h1 className="monitor-title">Live Monitor</h1>
               <p className="monitor-url">{targetUrl}</p>
             </div>
 
-            <div className="headline-right">
-              <div className="status-pill bug-pill">
-                {criticalCount + warningCount > 0
-                  ? `${criticalCount + warningCount} Bugs Detected`
-                  : 'Scanning...'}
+            <div className="monitor-topbar-right">
+              <div
+                className={`top-status-chip ${
+                  isCompleted ? 'completed' : totalIssueCount > 0 ? 'detected' : 'scanning'
+                }`}
+              >
+                {isCompleted
+                  ? 'Completed'
+                  : totalIssueCount > 0
+                    ? `${totalIssueCount} Bugs Detected`
+                    : 'Scanning'}
               </div>
 
-              <button
-                className="stop-button"
-                onClick={() => setIsStopped(true)}
-                disabled={isStopped}
-              >
-                {isStopped ? 'STOPPED' : 'X STOP'}
-              </button>
+              {!isCompleted && !isStopped && (
+                <button className="stop-button" onClick={handleStop}>
+                  Stop Test
+                </button>
+              )}
+
+              {!isCompleted && isStopped && (
+                <button className="restart-button" onClick={handleRestart}>
+                  Restart Test
+                </button>
+              )}
+
+              {isCompleted && (
+                <button className="restart-button done" onClick={handleGoReportNow}>
+                  View Report
+                </button>
+              )}
             </div>
           </section>
 
@@ -233,7 +323,11 @@ function Monitor() {
               <div>
                 <div className="progress-label">Test Progress</div>
                 <div className="progress-sub">
-                  {isStopped ? '테스트가 중지되었습니다.' : sceneMeta[currentScene].subtitle}
+                  {isCompleted
+                    ? '탐색이 완료되었습니다.'
+                    : isStopped
+                      ? '테스트가 중지되었습니다.'
+                      : sceneMeta[currentScene].subtitle}
                 </div>
               </div>
               <div className="progress-percent">{progress}%</div>
@@ -246,15 +340,24 @@ function Monitor() {
 
           <section className="monitor-grid">
             <div className="left-column">
-              <div className="preview-panel">
-                <div className="preview-panel-head">
-                  <div className="preview-meta">
-                    <span className="preview-scene-title">{sceneMeta[currentScene].title}</span>
-                    <span className={`live-badge ${isStopped ? 'paused' : ''}`}>
-                      {isStopped ? 'Paused' : 'Live'}
-                    </span>
+              <div className="preview-shell">
+                <div className="preview-shell-head">
+                  <div className="preview-shell-title-wrap">
+                    <div className="preview-shell-title-row">
+                      <span className="preview-shell-title">Browser Session</span>
+                      <span className={`live-badge ${isStopped ? 'paused' : ''}`}>
+                        {isCompleted ? 'Completed' : isStopped ? 'Paused' : 'Live'}
+                      </span>
+                    </div>
+                    <p className="preview-shell-sub">
+                      추후 Playwright 실시간 탐색 화면이 이 영역에 연결됩니다.
+                    </p>
                   </div>
-                  <span className="preview-viewport">mobile viewport</span>
+
+                  <div className="preview-head-meta">
+                    <span className="preview-meta-chip">{sceneMeta[currentScene].title}</span>
+                    <span className="preview-meta-chip subtle">{elapsedSeconds}s elapsed</span>
+                  </div>
                 </div>
 
                 <div className="preview-browser-bar">
@@ -267,158 +370,216 @@ function Monitor() {
                 </div>
 
                 <div className={`preview-stage scene-${currentScene}`}>
-                  {!isStopped && <div className="scan-line" />}
+                  {!isStopped && !isCompleted && <div className="scan-line" />}
 
-                  <div className="preview-overlay-top">
-                    <span className="frame-chip">{sceneMeta[currentScene].title}</span>
-                    <span className="frame-chip subtle">{elapsedSeconds}s elapsed</span>
-                  </div>
-
-                  {currentScene === 'home' && (
-                    <div className="mock-home">
-                      <div className="mock-home-hero" />
-                      <div className="mock-home-card-row">
-                        <div className="mock-card" />
-                        <div className="mock-card" />
-                        <div className="mock-card" />
-                      </div>
-                      <div className="mock-home-footer-line" />
-                    </div>
-                  )}
-
-                  {currentScene === 'product' && (
-                    <div className="mock-product">
-                      <div className="mock-product-gallery" />
-                      <div className="mock-product-side">
-                        <div className="mock-line wide" />
-                        <div className="mock-line" />
-                        <div className="mock-line short" />
-                        <button className="mock-add-button">Add to Cart</button>
-                      </div>
-                    </div>
-                  )}
-
-                  {currentScene === 'cart' && (
-                    <div className="mock-cart">
-                      <h3>Your Cart</h3>
-                      <div className="cart-demo-item">
-                        <div className="thumb" />
-                        <div className="cart-demo-info">
-                          <strong>Wireless Headphones</strong>
-                          <span>Quantity: 1</span>
+                  <div className="preview-stage-inner">
+                    <div className="preview-video-frame">
+                      <div className="preview-video-overlay">
+                        <div className="preview-video-label">Autonomous Web Exploration</div>
+                        <div className="preview-video-status">
+                          <span className="signal-dot" />
+                          {isCompleted ? 'completed' : isStopped ? 'paused' : 'running'}
                         </div>
-                        <div className="cart-demo-price">$79.99</div>
-                      </div>
-                      <div className="cart-demo-summary" />
-                    </div>
-                  )}
-
-                  {currentScene === 'checkout' && (
-                    <div className="mock-checkout">
-                      <div className="checkout-title-row">
-                        <h3>Checkout</h3>
-                        <span className="scan-chip">AI 탐색 중</span>
                       </div>
 
-                      <div className="checkout-box">
-                        <strong>Your Cart</strong>
-
-                        <div className="checkout-item">
-                          <div className="checkout-thumb" />
-                          <div className="checkout-info">
-                            <div className="checkout-name">Wireless Headphones</div>
-                            <div className="checkout-qty">Quantity: 1</div>
+                      <div className="preview-video-body">
+                        {currentScene === 'home' && (
+                          <div className="mock-home">
+                            <div className="mock-home-hero" />
+                            <div className="mock-home-card-row">
+                              <div className="mock-card" />
+                              <div className="mock-card" />
+                              <div className="mock-card" />
+                            </div>
+                            <div className="mock-home-footer-line" />
                           </div>
+                        )}
 
-                          <div className="checkout-badges">
-                            {warningCount > 0 && (
-                              <div className="inline-warning">price undefined</div>
+                        {currentScene === 'product' && (
+                          <div className="mock-product">
+                            <div className="mock-product-gallery" />
+                            <div className="mock-product-side">
+                              <div className="mock-line wide" />
+                              <div className="mock-line" />
+                              <div className="mock-line short" />
+                              <button className="mock-add-button">Add to Cart</button>
+                            </div>
+                          </div>
+                        )}
+
+                        {currentScene === 'cart' && (
+                          <div className="mock-cart">
+                            <h3>Your Cart</h3>
+                            <div className="cart-demo-item">
+                              <div className="thumb" />
+                              <div className="cart-demo-info">
+                                <strong>Wireless Headphones</strong>
+                                <span>Quantity: 1</span>
+                              </div>
+                              <div className="cart-demo-price">$79.99</div>
+                            </div>
+                            <div className="cart-demo-summary" />
+                          </div>
+                        )}
+
+                        {currentScene === 'checkout' && (
+                          <div className="mock-checkout">
+                            <div className="checkout-title-row">
+                              <h3>Checkout</h3>
+                              <span className="scan-chip">
+                                {isCompleted ? '탐색 완료' : 'AI 탐색 중'}
+                              </span>
+                            </div>
+
+                            <div className="checkout-box">
+                              <strong>Your Cart</strong>
+
+                              <div className="checkout-item">
+                                <div className="checkout-thumb" />
+                                <div className="checkout-info">
+                                  <div className="checkout-name">Wireless Headphones</div>
+                                  <div className="checkout-qty">Quantity: 1</div>
+                                </div>
+
+                                <div className="checkout-badges">
+                                  {warningCount > 0 && (
+                                    <div className="inline-warning">price undefined</div>
+                                  )}
+                                  <div className="agent-pill">
+                                    {isCompleted ? 'Done' : 'Analyzing'}
+                                  </div>
+                                  <div className="checkout-price">$79.99</div>
+                                </div>
+                              </div>
+                            </div>
+
+                            <div
+                              className={`checkout-action-wrap ${criticalCount > 0 ? 'active' : ''}`}
+                            >
+                              <button className="checkout-button">Proceed to Payment</button>
+                              {criticalCount > 0 && <div className="issue-pin pin-critical">1</div>}
+                            </div>
+
+                            {criticalCount > 0 && (
+                              <div className="checkout-error-note">
+                                버튼 클릭 영역이 하단 요소와 겹쳐 오작동할 수 있습니다.
+                              </div>
                             )}
-                            <div className="agent-pill">Analyzing</div>
-                            <div className="checkout-price">$79.99</div>
+
+                            {warningCount > 0 && <div className="issue-pin pin-warning">2</div>}
                           </div>
-                        </div>
+                        )}
                       </div>
-
-                      <div className={`checkout-action-wrap ${criticalCount > 0 ? 'active' : ''}`}>
-                        <button className="checkout-button">Proceed to Payment</button>
-                        {criticalCount > 0 && <div className="issue-pin pin-critical">1</div>}
-                      </div>
-
-                      {criticalCount > 0 && (
-                        <div className="checkout-error-note">
-                          버튼 클릭 영역이 하단 요소와 겹쳐 오작동할 수 있습니다.
-                        </div>
-                      )}
-
-                      {warningCount > 0 && <div className="issue-pin pin-warning">2</div>}
                     </div>
-                  )}
+
+                    <div className="preview-lower-info">
+                      <div className="preview-mini-stat">
+                        <span className="preview-mini-label">Viewport</span>
+                        <strong>Mobile</strong>
+                      </div>
+                      <div className="preview-mini-stat">
+                        <span className="preview-mini-label">Detected State</span>
+                        <strong>{sceneMeta[currentScene].title}</strong>
+                      </div>
+                      <div className="preview-mini-stat">
+                        <span className="preview-mini-label">Session Status</span>
+                        <strong>{isCompleted ? 'Completed' : isStopped ? 'Paused' : 'Running'}</strong>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
 
             <aside className="right-column">
-              <div className="logs-panel">
-                <h3 className="panel-heading">
-                  <span className="panel-icon">🕘</span>
-                  Action Logs
-                </h3>
+              <div className="side-panel">
+                <section className="panel-section">
+                  <div className="panel-section-head">
+                    <h3 className="panel-heading">Action Logs</h3>
+                    <span className="section-count">{visibleLogs.length}</span>
+                  </div>
 
-                <div className="logs-list">
-                  {visibleLogs.map((log, index) => (
-                    <div className="log-row" key={`${log.time}-${index}`}>
-                      <div className="log-time">{log.time}</div>
-                      <div className="log-main">
-                        <strong className={`log-label ${log.label.toLowerCase()}`}>
-                          [{log.label}]
-                        </strong>
-                        <div className="log-message">{log.message}</div>
+                  <div className="logs-list">
+                    {visibleLogs.map((log, index) => (
+                      <div className="log-row" key={`${log.time}-${index}`}>
+                        <div className="log-time">{log.time}</div>
+                        <div className="log-main">
+                          <strong className={`log-label ${log.label.toLowerCase()}`}>
+                            [{log.label}]
+                          </strong>
+                          <div className="log-message">{log.message}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+
+                <section className="panel-section">
+                  <div className="panel-section-head">
+                    <h3 className="panel-heading">System Metrics</h3>
+                  </div>
+
+                  <div className="metric-list">
+                    <div className="metric-box ok">
+                      <span className="metric-dot" />
+                      <div className="metric-content">
+                        <strong>GET /api/products</strong>
+                        <span>200 OK</span>
                       </div>
                     </div>
-                  ))}
-                </div>
-              </div>
 
-              <div className="metrics-panel">
-                <h3 className="panel-heading">
-                  <span className="panel-icon">📡</span>
-                  Live System Metrics
-                </h3>
+                    <div className={`metric-box ${consoleErrorCount > 0 ? 'error' : 'neutral'}`}>
+                      <span className="metric-dot" />
+                      <div className="metric-content">
+                        <strong>Console Runtime</strong>
+                        <span>
+                          {consoleErrorCount > 0
+                            ? 'TypeError: Cannot read property "price"'
+                            : 'No critical error yet'}
+                        </span>
+                      </div>
+                    </div>
 
-                <div className="metric-box ok">
-                  <span className="metric-icon">✓</span>
-                  GET /api/products - 200 OK
-                </div>
+                    <div className={`metric-box ${failedRequestCount > 0 ? 'warn' : 'neutral'}`}>
+                      <span className="metric-dot" />
+                      <div className="metric-content">
+                        <strong>POST /api/report</strong>
+                        <span>
+                          {failedRequestCount > 0 ? '500 Internal Server Error' : 'Pending'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </section>
 
-                <div className={`metric-box ${consoleErrorCount > 0 ? 'error' : 'neutral'}`}>
-                  <span className="metric-icon">{consoleErrorCount > 0 ? '!' : '•'}</span>
-                  {consoleErrorCount > 0
-                    ? 'TypeError: Cannot read property "price"'
-                    : 'Console runtime - no critical error yet'}
-                </div>
+                <section className="panel-section issue-section">
+                  <div className="panel-section-head">
+                    <h3 className="panel-heading">Detected Issues</h3>
+                    <span className="section-count">{visibleIssues.length}</span>
+                  </div>
 
-                <div className={`metric-box ${failedRequestCount > 0 ? 'warn' : 'neutral'}`}>
-                  <span className="metric-icon">{failedRequestCount > 0 ? '↗' : '…'}</span>
-                  {failedRequestCount > 0
-                    ? 'POST /api/report - 500 Internal Server Error'
-                    : 'POST /api/report - pending'}
-                </div>
-
-                <button
-                  className="report-button"
-                  disabled={!isStopped && progress < 100}
-                  onClick={() =>
-                    navigate('/report', {
-                      state: {
-                        createdAt: '2026.03.18',
-                        testId: '123456789',
-                      },
-                    })
-                  }
-                >
-                  레포트 생성
-                </button>
+                  <div className="issue-list">
+                    {visibleIssues.length === 0 ? (
+                      <div className="empty-issue-box">아직 탐지된 이슈가 없습니다.</div>
+                    ) : (
+                      visibleIssues.map((issue) => (
+                        <div
+                          className={`issue-card ${issue.type === 'error' ? 'critical' : 'warning'}`}
+                          key={issue.id}
+                        >
+                          <div className="issue-card-top">
+                            <span className="issue-badge">
+                              {issue.type === 'error' ? 'Critical' : 'Warning'}
+                            </span>
+                            <span className="issue-id">#{issue.id}</span>
+                          </div>
+                          <strong className="issue-title">{issue.title}</strong>
+                          <p className="issue-detail">{issue.detail}</p>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </section>
               </div>
             </aside>
           </section>

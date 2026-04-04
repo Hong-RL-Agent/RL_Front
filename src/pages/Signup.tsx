@@ -49,6 +49,9 @@ function Signup() {
       <div className="auth-box">
         <h1>회원가입</h1>
 
+        {/* TODO: useState로 이름 입력 상태 관리 */}
+        <input type="text" placeholder="이름" />
+
         {/* TODO: useState로 아이디 입력 상태 관리 */}
         <input type="text" placeholder="아이디" />
 
@@ -57,9 +60,6 @@ function Signup() {
 
         {/* TODO: 비밀번호 입력 상태 관리 */}
         <input type="password" placeholder="비밀번호" />
-
-        {/* TODO: 비밀번호 확인 로직 추가 */}
-        <input type="password" placeholder="비밀번호 확인" />
 
         {/* TODO:
             1. 회원가입 API 호출
