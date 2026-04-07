@@ -323,6 +323,14 @@
   }
 }
 
+.nav-logout-button {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+
 @media (max-width: 560px) {
   .menu-button {
     width: 24px;

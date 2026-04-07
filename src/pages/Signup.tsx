@@ -40,33 +40,31 @@
      - 입력값 재확인 요청
 */
 
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import '../styles/signup.css'
 
 function Signup() {
+  const navigate = useNavigate()
+
+  const handleSignup = () => {
+    // TODO:
+    // 나중에 여기서 API 호출 + validation 처리
+
+    // 지금은 프로토타입 → 그냥 로그인 페이지로 이동
+    navigate('/login')
+  }
+
   return (
     <div className="auth-page">
       <div className="auth-box">
         <h1>회원가입</h1>
 
-        {/* TODO: useState로 이름 입력 상태 관리 */}
         <input type="text" placeholder="이름" />
-
-        {/* TODO: useState로 아이디 입력 상태 관리 */}
         <input type="text" placeholder="아이디" />
-
-        {/* TODO: 이메일 입력값 상태 관리 및 형식 검증 */}
         <input type="email" placeholder="이메일" />
-
-        {/* TODO: 비밀번호 입력 상태 관리 */}
         <input type="password" placeholder="비밀번호" />
 
-        {/* TODO:
-            1. 회원가입 API 호출
-            2. 입력값 validation
-            3. 회원가입 성공 시 로그인 페이지 이동
-        */}
-        <button>회원가입</button>
+        <button onClick={handleSignup}>회원가입</button>
 
         <p>
           이미 계정이 있나요? <Link to="/login">로그인</Link>

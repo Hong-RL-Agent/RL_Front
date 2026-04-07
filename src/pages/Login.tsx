@@ -25,9 +25,12 @@
     - 오류 메시지 표시
     - 로그인 재시도 가능
 
-  [임시 관리자 로그인]
-  현재 프로토타입에서는 admin / admin 입력 시
-  관리자 대시보드(/admin/dashboard)로 이동합니다.
+  [임시 로컬 로그인]
+  현재 프로토타입에서는 백엔드 없이
+  입력값이 있으면 localStorage에 로그인 상태를 저장합니다.
+
+  - admin / admin  -> ADMIN 권한
+  - 그 외 계정     -> USER 권한
 */
 
 import { Link, useNavigate } from 'react-router-dom'
@@ -35,8 +38,29 @@ import { useState } from 'react'
 import type { ChangeEvent, FormEvent } from 'react'
 import '../styles/login.css'
 
+type StoredUser = {
+  username: string
+  role: 'ADMIN' | 'USER'
+}
+
+function getStoredUser(): StoredUser | null {
+  const storedUser = localStorage.getItem('user')
+
+  if (!storedUser) return null
+
+  try {
+    return JSON.parse(storedUser) as StoredUser
+  } catch (error) {
+    console.error('저장된 user 파싱 실패:', error)
+    localStorage.removeItem('user')
+    return null
+  }
+}
+
 function Login() {
   const navigate = useNavigate()
+
+  const [user] = useState<StoredUser | null>(() => getStoredUser())
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [errorMessage, setErrorMessage] = useState('')
@@ -53,34 +77,36 @@ function Login() {
     e.preventDefault()
     setErrorMessage('')
 
-    if (!username.trim() || !password.trim()) {
+    const trimmedUsername = username.trim()
+    const trimmedPassword = password.trim()
+
+    if (!trimmedUsername || !trimmedPassword) {
       setErrorMessage('아이디와 비밀번호를 입력해주세요.')
       return
     }
 
-    // TODO:
-    // 1. 일반 사용자 로그인 API 호출
-    // 2. 토큰 저장
-    // 3. 권한(role)에 따라 페이지 분기
-
-    // 임시 관리자 계정
-    if (username === 'admin' && password === 'admin') {
-      navigate('/admin/dashboard', {
-        state: {
-          adminName: 'Administrator',
-        },
-      })
-      return
+    const loginUser: StoredUser = {
+      username: trimmedUsername,
+      role:
+        trimmedUsername === 'admin' && trimmedPassword === 'admin'
+          ? 'ADMIN'
+          : 'USER',
     }
 
-    // 일반 사용자 임시 처리
-    setErrorMessage('현재는 관리자 계정(admin / admin)만 테스트 가능합니다.')
+    localStorage.setItem('user', JSON.stringify(loginUser))
+    navigate('/')
   }
 
   return (
     <div className="auth-page">
       <div className="auth-box">
         <h1>로그인</h1>
+
+        {user && (
+          <p className="auth-login-status">
+            현재 <strong>{user.username}</strong> 계정으로 로그인되어 있습니다.
+          </p>
+        )}
 
         <form className="auth-form" onSubmit={handleLogin}>
           <input
@@ -106,7 +132,9 @@ function Login() {
           아직 계정이 없나요? <Link to="/signup">회원가입</Link>
         </p>
 
-        <p className="admin-login-guide">관리자 테스트 계정: admin / admin</p>
+        <p className="admin-login-guide">
+          admin admin 은 관리자 처리
+        </p>
 
         <Link to="/" className="back-link">
           홈으로

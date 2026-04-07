@@ -30,8 +30,28 @@ import type { FormEvent } from 'react'
 import mainicon from '../assets/mainicon.png'
 import '../styles/home.css'
 
+type StoredUser = {
+  username: string
+  role?: string
+}
+
+function getStoredUser(): StoredUser | null {
+  const storedUser = localStorage.getItem('user')
+
+  if (!storedUser) return null
+
+  try {
+    return JSON.parse(storedUser) as StoredUser
+  } catch (error) {
+    console.error('저장된 user 파싱 실패:', error)
+    localStorage.removeItem('user')
+    return null
+  }
+}
+
 function Home() {
   const [url, setUrl] = useState('')
+  const [user, setUser] = useState<StoredUser | null>(() => getStoredUser())
   const navigate = useNavigate()
 
   /*
@@ -54,7 +74,6 @@ function Home() {
   const handleSubmit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()
 
-    // 입력값이 비어 있으면 진행하지 않음
     if (!url.trim()) return
 
     // TODO:
@@ -70,6 +89,12 @@ function Home() {
     })
   }
 
+  const handleLogout = () => {
+    localStorage.removeItem('user')
+    setUser(null)
+    navigate('/')
+  }
+
   return (
     <div className="home">
       <header className="header">
@@ -80,12 +105,25 @@ function Home() {
         </button>
 
         <nav className="header-right">
-          <Link to="/login" className="nav-link">
-            로그인
-          </Link>
-          <Link to="/signup" className="nav-link nav-link-signup">
-            회원가입
-          </Link>
+          {user ? (
+            <>
+              <Link to="/mypage" className="nav-link">
+                마이페이지
+              </Link>
+              <button type="button" className="nav-link nav-logout-button" onClick={handleLogout}>
+                로그아웃
+              </button>
+            </>
+          ) : (
+            <>
+              <Link to="/login" className="nav-link">
+                로그인
+              </Link>
+              <Link to="/signup" className="nav-link nav-link-signup">
+                회원가입
+              </Link>
+            </>
+          )}
         </nav>
       </header>
 
