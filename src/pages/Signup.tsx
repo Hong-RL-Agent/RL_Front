@@ -40,18 +40,53 @@
      - 입력값 재확인 요청
 */
 
+import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import '../styles/signup.css'
 
 function Signup() {
   const navigate = useNavigate()
 
-  const handleSignup = () => {
-    // TODO:
-    // 나중에 여기서 API 호출 + validation 처리
+  const [userName, setUserName] = useState('')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [passwordConfirm, setPasswordConfirm] = useState('')
+  const [errorMessage, setErrorMessage] = useState('')
 
-    // 지금은 프로토타입 → 그냥 로그인 페이지로 이동
-    navigate('/login')
+  const handleSignup = async () => {
+    setErrorMessage('')
+
+    if (!userName || !email || !password || !passwordConfirm) {
+      setErrorMessage('모든 항목을 입력해주세요.')
+      return
+    }
+    if (password !== passwordConfirm) {
+      setErrorMessage('비밀번호가 일치하지 않습니다.')
+      return
+    }
+    if (password.length < 6) {
+      setErrorMessage('비밀번호는 최소 6자 이상이어야 합니다.')
+      return
+    }
+
+    try {
+      const response = await fetch('/api/auth/signup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userName, email, password }),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        setErrorMessage(data.message || '회원가입에 실패했습니다.')
+        return
+      }
+
+      navigate('/login')
+    } catch (error) {
+      setErrorMessage('서버 연결에 실패했습니다.')
+    }
   }
 
   return (
@@ -59,10 +94,32 @@ function Signup() {
       <div className="auth-box">
         <h1>회원가입</h1>
 
-        <input type="text" placeholder="이름" />
-        <input type="text" placeholder="아이디" />
-        <input type="email" placeholder="이메일" />
-        <input type="password" placeholder="비밀번호" />
+        <input
+          type="text"
+          placeholder="이름"
+          value={userName}
+          onChange={(e) => setUserName(e.target.value)}
+        />
+        <input
+          type="email"
+          placeholder="이메일"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+        />
+        <input
+          type="password"
+          placeholder="비밀번호"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+        />
+        <input
+          type="password"
+          placeholder="비밀번호 확인"
+          value={passwordConfirm}
+          onChange={(e) => setPasswordConfirm(e.target.value)}
+        />
+
+        {errorMessage && <p className="error-message">{errorMessage}</p>}
 
         <button onClick={handleSignup}>회원가입</button>
 
