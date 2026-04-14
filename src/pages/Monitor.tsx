@@ -1,38 +1,3 @@
-/*
-  [추후 백엔드/API 연동 예정]
-
-  Monitor 페이지는 웹 테스트 실행 중 발생하는 상태를
-  실시간으로 시각화하는 페이지입니다.
-
-  현재는 UI 프로토타입 단계이기 때문에
-  테스트 진행률, 로그, 탐지 이슈 등이 모두 mock 데이터로 구성되어 있습니다.
-
-  실제 백엔드 연동 시 아래와 같은 흐름으로 동작할 예정입니다.
-
-  1. Home 페이지에서 테스트 시작 요청
-     POST /api/test/start
-
-  2. 백엔드에서 테스트 세션 생성 후 sessionId 반환
-
-  3. Monitor 페이지 진입 시 sessionId 기반으로 테스트 상태 조회
-     GET /api/test/{sessionId}/status
-
-  4. 주기적으로 테스트 진행률 및 상태 업데이트
-     GET /api/test/{sessionId}/progress
-
-  5. 실시간 로그 스트리밍 또는 polling
-     GET /api/test/{sessionId}/logs
-
-  6. 탐지된 버그 / UI 오류 조회
-     GET /api/test/{sessionId}/issues
-
-  7. 테스트 종료 후 리포트 생성
-     POST /api/test/{sessionId}/report
-
-  8. 리포트 생성 완료 후 report 페이지로 이동
-     또는 메일 발송 상태 표시
-*/
-
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import '../styles/monitor.css'
@@ -53,6 +18,26 @@ type Issue = {
 }
 
 type FrameScene = 'home' | 'product' | 'cart' | 'checkout'
+
+type BackendEvent = {
+  type: 'progress' | 'log' | 'issue' | 'status' | 'complete'
+  label?: string
+  message?: string
+  progress?: number
+  status?: 'running' | 'paused' | 'completed' | 'failed'
+  issueType?: 'error' | 'warning'
+}
+
+type ReportState = {
+  createdAt: string
+  testId: string
+  targetUrl: string
+  status: string
+  progress: number
+  logs: LiveLog[]
+  issues: Issue[]
+  sessionStatus: 'running' | 'paused' | 'completed' | 'failed'
+}
 
 const sceneMeta: Record<
   FrameScene,
@@ -79,136 +64,228 @@ const sceneMeta: Record<
   },
 }
 
-const stagedLogs: LiveLog[] = [
-  { time: '10:23:45', label: 'Navigate', message: 'Navigated to /home' },
-  { time: '10:23:47', label: 'Action', message: 'Clicked "Products" navigation link' },
-  { time: '10:23:49', label: 'Navigate', message: 'Navigated to /products/wireless-headphones' },
-  { time: '10:23:52', label: 'State', message: 'DOM updated - 24 new elements detected' },
-  { time: '10:23:55', label: 'Action', message: 'Clicked "Add to Cart" button' },
-  { time: '10:23:58', label: 'Navigate', message: 'Navigated to /cart' },
-  { time: '10:24:02', label: 'Action', message: 'Clicked "Proceed to Payment" button' },
-  { time: '10:24:04', label: 'Error', message: 'CTA button overlaps bottom element on mobile viewport' },
-  { time: '10:24:06', label: 'Network', message: 'POST /api/report responded with 500' },
-  { time: '10:24:09', label: 'State', message: 'Checkout DOM stabilized after retry' },
-]
-
-const stagedIssues: Issue[] = [
-  {
-    id: 1,
-    type: 'error',
-    title: '결제 버튼 클릭 영역 충돌',
-    detail: '모바일 뷰포트에서 하단 요소와 겹쳐 실제 클릭 좌표가 밀립니다.',
-  },
-  {
-    id: 2,
-    type: 'warning',
-    title: 'price 값 undefined 감지',
-    detail: '상품 가격 렌더링 중 일부 상태에서 undefined 접근이 발생합니다.',
-  },
-]
-
-const frameSequence: FrameScene[] = ['home', 'product', 'cart', 'checkout', 'checkout', 'checkout']
+const frameSequence: FrameScene[] = ['home', 'product', 'cart', 'checkout']
 
 function Monitor() {
   const location = useLocation()
   const navigate = useNavigate()
 
-  const targetUrl =
-    (location.state as { targetUrl?: string } | null)?.targetUrl || 'https://example.com'
+  const routeState = location.state as { targetUrl?: string; sessionId?: string } | null
+  const targetUrl = routeState?.targetUrl || 'http://localhost:8080/'
+  const sessionId = routeState?.sessionId || ''
 
-  const [progress, setProgress] = useState(8)
+  const [progress, setProgress] = useState(0)
   const [isStopped, setIsStopped] = useState(false)
-  const [visibleLogCount, setVisibleLogCount] = useState(2)
   const [sceneIndex, setSceneIndex] = useState(0)
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
   const [showCompleteModal, setShowCompleteModal] = useState(false)
   const [hasCompleted, setHasCompleted] = useState(false)
+  const [liveLogs, setLiveLogs] = useState<LiveLog[]>([])
+  const [liveIssues, setLiveIssues] = useState<Issue[]>([])
+  const [sessionStatus, setSessionStatus] = useState<'running' | 'paused' | 'completed' | 'failed'>(
+    'running'
+  )
 
-  const progressRef = useRef(8)
-  const hideModalTimerRef = useRef<number | null>(null)
   const navigateTimerRef = useRef<number | null>(null)
-  const completionTriggeredRef = useRef(false)
+  const elapsedTimerRef = useRef<number | null>(null)
+  const eventSourceRef = useRef<EventSource | null>(null)
+  const hasShownCompleteRef = useRef(false)
 
-  const isCompleted = hasCompleted || progress >= 100
+  const isCompleted = hasCompleted || progress >= 100 || sessionStatus === 'completed'
 
   useEffect(() => {
-    if (isStopped || isCompleted) return
+    if (isCompleted || isStopped) return
 
-    const timer = window.setInterval(() => {
-      const nextProgress = Math.min(
-        progressRef.current + Math.floor(Math.random() * 8 + 4),
-        100
-      )
-
-      progressRef.current = nextProgress
-
+    elapsedTimerRef.current = window.setInterval(() => {
       setElapsedSeconds((prev) => prev + 1)
-      setProgress(nextProgress)
+    }, 1000)
 
-      if (nextProgress >= 100) {
-        if (!completionTriggeredRef.current) {
-          completionTriggeredRef.current = true
+    return () => {
+      if (elapsedTimerRef.current) {
+        window.clearInterval(elapsedTimerRef.current)
+      }
+    }
+  }, [isCompleted, isStopped])
+
+  useEffect(() => {
+    if (!sessionId) return
+
+    const eventSource = new EventSource(`http://localhost:8081/api/test/${sessionId}/stream`)
+    eventSourceRef.current = eventSource
+
+    eventSource.onopen = () => {
+      console.log('SSE connected')
+    }
+
+    eventSource.onerror = (error) => {
+      console.error('SSE error:', error)
+    }
+
+    const handleIncoming = (raw: MessageEvent) => {
+      try {
+        const event: BackendEvent =
+          typeof raw.data === 'string' ? JSON.parse(raw.data) : raw.data
+
+        if (event.type === 'progress' && typeof event.progress === 'number') {
+          const nextProgress = Math.max(0, Math.min(100, event.progress))
+          setProgress(nextProgress)
+
+          if (nextProgress >= 75) {
+            setSceneIndex(3)
+          } else if (nextProgress >= 50) {
+            setSceneIndex(2)
+          } else if (nextProgress >= 25) {
+            setSceneIndex(1)
+          } else {
+            setSceneIndex(0)
+          }
+        }
+
+        if (event.type === 'status') {
+          if (event.status) {
+            setSessionStatus(event.status)
+          }
+
+          if (event.status === 'completed' && !hasShownCompleteRef.current) {
+            hasShownCompleteRef.current = true
+            setHasCompleted(true)
+            setIsStopped(true)
+            setProgress(100)
+            setShowCompleteModal(true)
+          }
+
+          if (event.status === 'failed') {
+            setIsStopped(true)
+          }
+        }
+
+        if (event.type === 'log') {
+          const rawLabel = event.label || 'State'
+          const mappedLabel: LogLabel =
+            rawLabel === 'Action' ||
+            rawLabel === 'State' ||
+            rawLabel === 'Error' ||
+            rawLabel === 'Network' ||
+            rawLabel === 'Navigate'
+              ? rawLabel
+              : 'State'
+
+          setLiveLogs((prev) => [
+            ...prev,
+            {
+              time: new Date().toLocaleTimeString(),
+              label: mappedLabel,
+              message: event.message || '',
+            },
+          ])
+        }
+
+        if (event.type === 'issue') {
+          const issueType = event.issueType === 'warning' ? 'warning' : 'error'
+
+          setLiveIssues((prev) => [
+            ...prev,
+            {
+              id: prev.length + 1,
+              type: issueType,
+              title: event.label || (issueType === 'warning' ? 'Warning' : 'Error'),
+              detail: event.message || '',
+            },
+          ])
+
+          if (event.label === 'Network') {
+            setLiveLogs((prev) => [
+              ...prev,
+              {
+                time: new Date().toLocaleTimeString(),
+                label: 'Network',
+                message: event.message || '',
+              },
+            ])
+          } else if (event.label === 'Error') {
+            setLiveLogs((prev) => [
+              ...prev,
+              {
+                time: new Date().toLocaleTimeString(),
+                label: 'Error',
+                message: event.message || '',
+              },
+            ])
+          }
+        }
+
+        if (event.type === 'complete' && !hasShownCompleteRef.current) {
+          hasShownCompleteRef.current = true
           setHasCompleted(true)
           setIsStopped(true)
-          setVisibleLogCount(stagedLogs.length)
-          setSceneIndex(frameSequence.length - 1)
+          setSessionStatus('completed')
+          setProgress(100)
           setShowCompleteModal(true)
+          eventSource.close()
         }
-        return
+      } catch (error) {
+        console.error('SSE parse error:', error, raw.data)
       }
+    }
 
-      setVisibleLogCount((prev) => Math.min(prev + 1, stagedLogs.length))
-      setSceneIndex((prev) => Math.min(prev + 1, frameSequence.length - 1))
-    }, 1800)
+    eventSource.addEventListener('log', handleIncoming as EventListener)
+    eventSource.addEventListener('issue', handleIncoming as EventListener)
+    eventSource.addEventListener('progress', handleIncoming as EventListener)
+    eventSource.addEventListener('status', handleIncoming as EventListener)
+    eventSource.addEventListener('complete', handleIncoming as EventListener)
 
-    return () => window.clearInterval(timer)
-  }, [isStopped, isCompleted])
+    return () => {
+      eventSource.close()
+    }
+  }, [sessionId])
+
+  const buildReportState = (): ReportState => ({
+    createdAt: new Date().toLocaleDateString('ko-KR'),
+    testId: sessionId,
+    targetUrl,
+    status: 'completed',
+    progress,
+    logs: liveLogs,
+    issues: liveIssues,
+    sessionStatus,
+  })
 
   useEffect(() => {
     if (!showCompleteModal) return
 
-    hideModalTimerRef.current = window.setTimeout(() => {
-      setShowCompleteModal(false)
-    }, 2200)
-
     navigateTimerRef.current = window.setTimeout(() => {
+      setShowCompleteModal(false)
+
       navigate('/report', {
-        state: {
-          createdAt: '2026.03.18',
-          testId: '123456789',
-          targetUrl,
-          status: 'completed',
-        },
+        state: buildReportState(),
       })
     }, 2600)
 
     return () => {
-      if (hideModalTimerRef.current) {
-        window.clearTimeout(hideModalTimerRef.current)
-      }
-    }
-  }, [showCompleteModal, navigate, targetUrl])
-
-  useEffect(() => {
-    return () => {
-      if (hideModalTimerRef.current) {
-        window.clearTimeout(hideModalTimerRef.current)
-      }
       if (navigateTimerRef.current) {
         window.clearTimeout(navigateTimerRef.current)
       }
     }
+  }, [showCompleteModal, navigate, progress, liveLogs, liveIssues, sessionId, sessionStatus, targetUrl])
+
+  useEffect(() => {
+    return () => {
+      if (navigateTimerRef.current) {
+        window.clearTimeout(navigateTimerRef.current)
+      }
+      if (elapsedTimerRef.current) {
+        window.clearTimeout(elapsedTimerRef.current)
+      }
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close()
+      }
+    }
   }, [])
 
-  const visibleLogs = stagedLogs.slice(0, visibleLogCount)
+  const visibleLogs = liveLogs
+  const visibleIssues = liveIssues
 
-  const visibleIssues = useMemo(() => {
-    if (visibleLogCount >= 9) return stagedIssues
-    if (visibleLogCount >= 8) return stagedIssues.slice(0, 1)
-    return []
-  }, [visibleLogCount])
-
-  const currentScene = frameSequence[sceneIndex]
+  const currentScene = frameSequence[Math.min(sceneIndex, frameSequence.length - 1)]
   const criticalCount = visibleIssues.filter((issue) => issue.type === 'error').length
   const warningCount = visibleIssues.filter((issue) => issue.type === 'warning').length
   const totalIssueCount = criticalCount + warningCount
@@ -219,18 +296,16 @@ function Monitor() {
   const handleStop = () => {
     if (isCompleted) return
     setIsStopped(true)
+    setSessionStatus('paused')
   }
 
   const handleRestart = () => {
     if (isCompleted) return
-    progressRef.current = progress
     setIsStopped(false)
+    setSessionStatus('running')
   }
 
   const handleGoReportNow = () => {
-    if (hideModalTimerRef.current) {
-      window.clearTimeout(hideModalTimerRef.current)
-    }
     if (navigateTimerRef.current) {
       window.clearTimeout(navigateTimerRef.current)
     }
@@ -238,14 +313,15 @@ function Monitor() {
     setShowCompleteModal(false)
 
     navigate('/report', {
-      state: {
-        createdAt: '2026.03.18',
-        testId: '123456789',
-        targetUrl,
-        status: 'completed',
-      },
+      state: buildReportState(),
     })
   }
+
+  const progressSubtitle = useMemo(() => {
+    if (isCompleted) return '탐색이 완료되었습니다.'
+    if (isStopped) return '테스트가 중지되었습니다.'
+    return sceneMeta[currentScene].subtitle
+  }, [isCompleted, isStopped, currentScene])
 
   return (
     <div className="monitor-page">
@@ -295,7 +371,9 @@ function Monitor() {
                   ? 'Completed'
                   : totalIssueCount > 0
                     ? `${totalIssueCount} Bugs Detected`
-                    : 'Scanning'}
+                    : sessionStatus === 'paused'
+                      ? 'Paused'
+                      : 'Scanning'}
               </div>
 
               {!isCompleted && !isStopped && (
@@ -322,13 +400,7 @@ function Monitor() {
             <div className="progress-top">
               <div>
                 <div className="progress-label">Test Progress</div>
-                <div className="progress-sub">
-                  {isCompleted
-                    ? '탐색이 완료되었습니다.'
-                    : isStopped
-                      ? '테스트가 중지되었습니다.'
-                      : sceneMeta[currentScene].subtitle}
-                </div>
+                <div className="progress-sub">{progressSubtitle}</div>
               </div>
               <div className="progress-percent">{progress}%</div>
             </div>
@@ -443,7 +515,7 @@ function Monitor() {
 
                                 <div className="checkout-badges">
                                   {warningCount > 0 && (
-                                    <div className="inline-warning">price undefined</div>
+                                    <div className="inline-warning">warning detected</div>
                                   )}
                                   <div className="agent-pill">
                                     {isCompleted ? 'Done' : 'Analyzing'}
@@ -500,17 +572,21 @@ function Monitor() {
                   </div>
 
                   <div className="logs-list">
-                    {visibleLogs.map((log, index) => (
-                      <div className="log-row" key={`${log.time}-${index}`}>
-                        <div className="log-time">{log.time}</div>
-                        <div className="log-main">
-                          <strong className={`log-label ${log.label.toLowerCase()}`}>
-                            [{log.label}]
-                          </strong>
-                          <div className="log-message">{log.message}</div>
+                    {visibleLogs.length === 0 ? (
+                      <div className="empty-issue-box">아직 수신된 로그가 없습니다.</div>
+                    ) : (
+                      visibleLogs.map((log, index) => (
+                        <div className="log-row" key={`${log.time}-${index}`}>
+                          <div className="log-time">{log.time}</div>
+                          <div className="log-main">
+                            <strong className={`log-label ${log.label.toLowerCase()}`}>
+                              [{log.label}]
+                            </strong>
+                            <div className="log-message">{log.message}</div>
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      ))
+                    )}
                   </div>
                 </section>
 
@@ -523,8 +599,8 @@ function Monitor() {
                     <div className="metric-box ok">
                       <span className="metric-dot" />
                       <div className="metric-content">
-                        <strong>GET /api/products</strong>
-                        <span>200 OK</span>
+                        <strong>Session</strong>
+                        <span>{sessionStatus}</span>
                       </div>
                     </div>
 
@@ -534,7 +610,7 @@ function Monitor() {
                         <strong>Console Runtime</strong>
                         <span>
                           {consoleErrorCount > 0
-                            ? 'TypeError: Cannot read property "price"'
+                            ? `${consoleErrorCount} error event(s) detected`
                             : 'No critical error yet'}
                         </span>
                       </div>
@@ -543,9 +619,11 @@ function Monitor() {
                     <div className={`metric-box ${failedRequestCount > 0 ? 'warn' : 'neutral'}`}>
                       <span className="metric-dot" />
                       <div className="metric-content">
-                        <strong>POST /api/report</strong>
+                        <strong>Network Failures</strong>
                         <span>
-                          {failedRequestCount > 0 ? '500 Internal Server Error' : 'Pending'}
+                          {failedRequestCount > 0
+                            ? `${failedRequestCount} request failure event(s)`
+                            : 'Pending'}
                         </span>
                       </div>
                     </div>

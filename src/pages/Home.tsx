@@ -1,29 +1,3 @@
-/*
-  [추후 백엔드/API 연동 예정 영역]
-
-  현재 Home 페이지는 사용자가 입력한 URL을 monitor 페이지로 단순 전달하는
-  프론트엔드 프로토타입 단계입니다.
-
-  추후에는 아래와 같은 흐름으로 백엔드와 연동할 예정입니다.
-
-  1. 사용자가 테스트할 대상 URL 입력
-  2. 프론트엔드에서 URL 형식 검증 및 필요한 옵션값 정리
-  3. 백엔드에 테스트 시작 요청 API 호출
-     - 예: POST /api/test/start
-     - 요청 데이터: targetUrl, test option, user info(optional)
-  4. 백엔드에서 테스트 세션 생성 후 sessionId 반환
-  5. 프론트엔드는 반환받은 sessionId를 monitor 페이지로 전달
-  6. monitor 페이지에서는 sessionId를 기반으로
-     - 현재 진행률 조회
-     - 실시간 로그 조회
-     - 탐지 이슈 조회
-     - 리포트 생성 요청
-     등을 수행하게 됨
-
-  즉, 현재의 navigate('/monitor') 로직은 임시 프로토타입이며,
-  실제 구현 시에는 API 응답 결과를 받은 뒤 monitor 페이지로 이동하도록 변경될 예정입니다.
-*/
-
 import { Link, useNavigate } from 'react-router-dom'
 import { useState } from 'react'
 import type { FormEvent } from 'react'
@@ -33,6 +7,12 @@ import '../styles/home.css'
 type StoredUser = {
   username: string
   role?: string
+}
+
+type StartTestResponse = {
+  sessionId: string
+  status: string
+  error?: string
 }
 
 function getStoredUser(): StoredUser | null {
@@ -49,44 +29,88 @@ function getStoredUser(): StoredUser | null {
   }
 }
 
+function isValidHttpUrl(value: string) {
+  try {
+    const url = new URL(value)
+    return url.protocol === 'http:' || url.protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
 function Home() {
-  const [url, setUrl] = useState('')
+  const [url, setUrl] = useState('http://localhost:8080/')
   const [user, setUser] = useState<StoredUser | null>(() => getStoredUser())
+  const [isStarting, setIsStarting] = useState(false)
+  const [errorMessage, setErrorMessage] = useState('')
   const navigate = useNavigate()
 
-  /*
-    [추후 백엔드/API 연동 예정]
-
-    현재는 사용자가 입력한 URL을 monitor 페이지로 바로 전달하는
-    프론트엔드 프로토타입 구조입니다.
-
-    실제 연동 단계에서는 아래 흐름으로 확장 예정입니다.
-
-    - URL 입력값 검증
-    - 테스트 시작 API 호출
-    - 백엔드에서 sessionId 또는 testId 발급
-    - monitor 페이지로 세션 정보 전달
-    - monitor 페이지에서 실시간 진행률, 로그, 이슈, 리포트 데이터를 조회
-
-    즉, 현재 navigate('/monitor') 로직은 임시 흐름이며,
-    이후에는 API 응답을 받은 뒤 이동하는 구조로 변경될 예정입니다.
-  */
-  const handleSubmit = (e: FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()
 
-    if (!url.trim()) return
+    const trimmedUrl = url.trim()
 
-    // TODO:
-    // 1. URL 유효성 검사 추가
-    // 2. 백엔드 테스트 시작 API 호출
-    // 3. sessionId/testId 응답 수신
-    // 4. monitor 페이지로 세션 정보와 함께 이동
+    if (!trimmedUrl) {
+      setErrorMessage('테스트할 URL을 입력해주세요.')
+      return
+    }
 
-    navigate('/monitor', {
-      state: {
-        targetUrl: url,
-      },
-    })
+    if (!isValidHttpUrl(trimmedUrl)) {
+      setErrorMessage('http:// 또는 https:// 형식의 올바른 URL을 입력해주세요.')
+      return
+    }
+
+    try {
+      setIsStarting(true)
+      setErrorMessage('')
+
+      console.log('[HOME] 테스트 시작 요청')
+      console.log('[HOME] targetUrl =', trimmedUrl)
+
+      const response = await fetch('http://localhost:8081/api/test/start', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          targetUrl: trimmedUrl,
+        }),
+      })
+
+      console.log('[HOME] /api/test/start status =', response.status)
+
+      let data: StartTestResponse | null = null
+
+      try {
+        data = (await response.json()) as StartTestResponse
+      } catch (jsonError) {
+        console.error('[HOME] start 응답 JSON 파싱 실패:', jsonError)
+      }
+
+      if (!response.ok) {
+        throw new Error(data?.error || '테스트 시작에 실패했습니다.')
+      }
+
+      if (!data?.sessionId) {
+        throw new Error('sessionId를 받지 못했습니다.')
+      }
+
+      console.log('[HOME] start response =', data)
+
+      navigate('/monitor', {
+        state: {
+          targetUrl: trimmedUrl,
+          sessionId: data.sessionId,
+        },
+      })
+    } catch (error) {
+      console.error('[HOME] 테스트 시작 오류:', error)
+      setErrorMessage(
+        error instanceof Error ? error.message : '테스트 시작 중 오류가 발생했습니다.'
+      )
+    } finally {
+      setIsStarting(false)
+    }
   }
 
   const handleLogout = () => {
@@ -98,7 +122,7 @@ function Home() {
   return (
     <div className="home">
       <header className="header">
-        <button className="menu-button" aria-label="메뉴">
+        <button className="menu-button" aria-label="메뉴" type="button">
           <span />
           <span />
           <span />
@@ -147,23 +171,46 @@ function Home() {
               <div className="search-label">URL</div>
               <input
                 type="text"
-                placeholder="https://example.com"
+                placeholder="http://localhost:8080/"
                 className="search-input"
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
+                disabled={isStarting}
               />
             </div>
 
-            <button type="submit" className="search-button">
-              테스트 시작
+            <button type="submit" className="search-button" disabled={isStarting}>
+              {isStarting ? '테스트 시작 중...' : '테스트 시작'}
             </button>
           </form>
+
+          {errorMessage && (
+            <p
+              style={{
+                marginTop: '12px',
+                color: '#d93025',
+                fontSize: '14px',
+                fontWeight: 500,
+              }}
+            >
+              {errorMessage}
+            </p>
+          )}
 
           <div className="quick-links">
             <button
               type="button"
               className="quick-chip"
+              onClick={() => setUrl('http://localhost:8080/')}
+              disabled={isStarting}
+            >
+              localhost:8080
+            </button>
+            <button
+              type="button"
+              className="quick-chip"
               onClick={() => setUrl('https://example.com')}
+              disabled={isStarting}
             >
               example.com
             </button>
@@ -171,15 +218,9 @@ function Home() {
               type="button"
               className="quick-chip"
               onClick={() => setUrl('https://github.com')}
+              disabled={isStarting}
             >
               github.com
-            </button>
-            <button
-              type="button"
-              className="quick-chip"
-              onClick={() => setUrl('https://www.naver.com')}
-            >
-              naver.com
             </button>
           </div>
 
