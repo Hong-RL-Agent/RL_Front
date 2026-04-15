@@ -38,63 +38,62 @@ import { useState } from 'react'
 import type { ChangeEvent, FormEvent } from 'react'
 import '../styles/login.css'
 
-type StoredUser = {
-  username: string
-  role: 'ADMIN' | 'USER'
-}
-
-function getStoredUser(): StoredUser | null {
-  const storedUser = localStorage.getItem('user')
-
-  if (!storedUser) return null
-
-  try {
-    return JSON.parse(storedUser) as StoredUser
-  } catch (error) {
-    console.error('저장된 user 파싱 실패:', error)
-    localStorage.removeItem('user')
-    return null
-  }
-}
-
 function Login() {
   const navigate = useNavigate()
 
-  const [user] = useState<StoredUser | null>(() => getStoredUser())
-  const [username, setUsername] = useState('')
+  const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [errorMessage, setErrorMessage] = useState('')
 
-  const handleUsernameChange = (e: ChangeEvent<HTMLInputElement>) => {
-    setUsername(e.target.value)
+  const handleEmailChange = (e: ChangeEvent<HTMLInputElement>) => {
+    setEmail(e.target.value)
   }
 
   const handlePasswordChange = (e: ChangeEvent<HTMLInputElement>) => {
     setPassword(e.target.value)
   }
 
-  const handleLogin = (e: FormEvent<HTMLFormElement>) => {
+  const handleLogin = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     setErrorMessage('')
 
-    const trimmedUsername = username.trim()
-    const trimmedPassword = password.trim()
-
-    if (!trimmedUsername || !trimmedPassword) {
-      setErrorMessage('아이디와 비밀번호를 입력해주세요.')
+    if (!email || !password) {
+      setErrorMessage('이메일과 비밀번호를 입력해주세요.')
       return
     }
 
-    const loginUser: StoredUser = {
-      username: trimmedUsername,
-      role:
-        trimmedUsername === 'admin' && trimmedPassword === 'admin'
-          ? 'ADMIN'
-          : 'USER',
-    }
+    try {
+      const response = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      })
 
-    localStorage.setItem('user', JSON.stringify(loginUser))
-    navigate('/')
+      const data = await response.json()
+
+      if (!response.ok) {
+        setErrorMessage(data.message || '로그인에 실패했습니다.')
+        return
+      }
+
+      localStorage.setItem('accessToken', data.accessToken)
+      localStorage.setItem('refreshToken', data.refreshToken)
+      localStorage.setItem('userName', data.userName)
+      localStorage.setItem('role', data.role)
+      localStorage.setItem('userId', String(data.userId))
+      localStorage.setItem('user', JSON.stringify({
+        username: data.userName,
+        role: data.role,
+      }))
+
+      if (data.role === 'ADMIN') {
+        navigate('/admin')
+      } else {
+        navigate('/')
+      }
+    } catch (error) {
+      setErrorMessage('서버 연결에 실패했습니다.')
+    }
   }
 
   return (
@@ -102,20 +101,13 @@ function Login() {
       <div className="auth-box">
         <h1>로그인</h1>
 
-        {user && (
-          <p className="auth-login-status">
-            현재 <strong>{user.username}</strong> 계정으로 로그인되어 있습니다.
-          </p>
-        )}
-
         <form className="auth-form" onSubmit={handleLogin}>
           <input
-            type="text"
-            placeholder="아이디"
-            value={username}
-            onChange={handleUsernameChange}
+            type="email"
+            placeholder="이메일"
+            value={email}
+            onChange={handleEmailChange}
           />
-
           <input
             type="password"
             placeholder="비밀번호"
@@ -130,10 +122,6 @@ function Login() {
 
         <p>
           아직 계정이 없나요? <Link to="/signup">회원가입</Link>
-        </p>
-
-        <p className="admin-login-guide">
-          admin admin 은 관리자 처리
         </p>
 
         <Link to="/" className="back-link">
