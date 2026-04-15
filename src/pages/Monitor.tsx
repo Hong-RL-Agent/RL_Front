@@ -1,3 +1,5 @@
+//백엔드 프로토타입과 연결 테스트. 추후 백엔드 구축 후 백엔드와 연결 예정
+
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import '../styles/monitor.css'
