@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
+import { apiUrl } from '../lib/api'
 import '../styles/monitor.css'
 
 type LogLabel = 'Navigate' | 'Action' | 'State' | 'Error' | 'Network'
@@ -73,7 +74,7 @@ function Monitor() {
   const navigate = useNavigate()
 
   const routeState = location.state as { targetUrl?: string; sessionId?: string } | null
-  const targetUrl = routeState?.targetUrl || 'http://localhost:8080/'
+  const targetUrl = routeState?.targetUrl || ''
   const sessionId = routeState?.sessionId || ''
 
   const [progress, setProgress] = useState(0)
@@ -112,7 +113,7 @@ function Monitor() {
   useEffect(() => {
     if (!sessionId) return
 
-    const eventSource = new EventSource(`http://localhost:8081/api/test/${sessionId}/stream`)
+    const eventSource = new EventSource(apiUrl(`/api/test/${sessionId}/stream`))
     eventSourceRef.current = eventSource
 
     eventSource.onopen = () => {
@@ -120,7 +121,9 @@ function Monitor() {
     }
 
     eventSource.onerror = (error) => {
-      console.error('SSE error:', error)
+      if (eventSource.readyState !== EventSource.CLOSED) {
+        console.warn('SSE connection interrupted; retrying:', error)
+      }
     }
 
     const handleIncoming = (raw: MessageEvent) => {
@@ -158,6 +161,7 @@ function Monitor() {
 
           if (event.status === 'failed') {
             setIsStopped(true)
+            eventSource.close()
           }
         }
 

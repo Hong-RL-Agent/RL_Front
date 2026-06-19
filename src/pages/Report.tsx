@@ -2,7 +2,7 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import html2pdf from 'html2pdf.js'
 import '../styles/report.css'
 
-type LogLabel = 'Navigate' | 'Action' | 'State' | 'Error' | 'Network'
+type LogLabel = 'Navigate' | 'Action' | 'State' | 'Error' | 'Network' | 'DOM' | 'Console'
 
 type LiveLog = {
   time: string
@@ -17,6 +17,14 @@ type Issue = {
   detail: string
 }
 
+type StateCheck = {
+  key: string
+  label: string
+  passed: boolean
+  expected: string
+  evidence: string
+}
+
 type ReportState = {
   createdAt?: string
   testId?: string
@@ -26,6 +34,41 @@ type ReportState = {
   logs?: LiveLog[]
   issues?: Issue[]
   sessionStatus?: 'running' | 'paused' | 'completed' | 'failed'
+
+  // report-scan HTML 쪽 데이터가 넘어올 경우를 위한 확장 필드
+  startedAt?: string
+  endedAt?: string
+  durationMs?: number
+  visitedPageCount?: number
+  totalActionCount?: number
+  successfulActionCount?: number
+  failedActionCount?: number
+  stateChecks?: StateCheck[]
+  recommendations?: string[]
+}
+
+function formatDuration(durationMs?: number) {
+  if (!durationMs && durationMs !== 0) return '-'
+  if (durationMs < 1000) return `${durationMs}ms`
+
+  const totalSeconds = Math.floor(durationMs / 1000)
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+
+  if (minutes === 0) return `${seconds}s`
+  return `${minutes}m ${seconds}s`
+}
+
+function formatShortDate(value?: string) {
+  if (!value) return '-'
+
+  // 2026. 6. 19. 같은 값은 그대로 사용
+  if (value.includes('.')) return value
+
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+
+  return date.toLocaleDateString('ko-KR')
 }
 
 function Report() {
@@ -35,7 +78,7 @@ function Report() {
   const reportData: ReportState = (location.state as ReportState | null) || {
     createdAt: '2026.03.18',
     testId: '123456789',
-    targetUrl: 'http://localhost:8080/',
+    targetUrl: '',
     status: 'completed',
     progress: 100,
     logs: [],
@@ -48,9 +91,81 @@ function Report() {
 
   const criticalIssues = issues.filter((issue) => issue.type === 'error')
   const warningIssues = issues.filter((issue) => issue.type === 'warning')
+
+  const consoleErrorCount = logs.filter((log) => log.label === 'Error' || log.label === 'Console').length
+  const networkFailureCount = logs.filter((log) => log.label === 'Network').length
+  const stateLogCount = logs.filter((log) => log.label === 'State' || log.label === 'DOM').length
+
+  const loadingIssueCount = logs.filter((log) =>
+    /loading|timeout|stuck|infinite|무한|로딩|멈춤/i.test(log.message)
+  ).length
+
+  const actionLogCount = logs.filter((log) => log.label === 'Navigate' || log.label === 'Action').length
+
   const successRequestCount = Math.max(
-    logs.filter((log) => log.label === 'Navigate' || log.label === 'Action').length -
-      logs.filter((log) => log.label === 'Network').length,
+    reportData.successfulActionCount ?? actionLogCount - networkFailureCount,
+    0
+  )
+
+  const totalActionCount = reportData.totalActionCount ?? actionLogCount
+  const failedActionCount = reportData.failedActionCount ?? criticalIssues.length + networkFailureCount
+
+  const derivedStateChecks: StateCheck[] = [
+    {
+      key: 'DOM_CHANGED',
+      label: 'DOM 상태 변화 감지',
+      passed: stateLogCount > 0 || successRequestCount > 0,
+      expected: '사용자 액션 이후 DOM 또는 상태 변화가 기록되어야 함',
+      evidence:
+        stateLogCount > 0
+          ? `State/DOM 로그 ${stateLogCount}건 수집`
+          : successRequestCount > 0
+            ? `성공 액션 ${successRequestCount}건 기반 상태 변화 가능성 확인`
+            : '상태 변화 로그 없음',
+    },
+    {
+      key: 'NO_CONSOLE_ERROR',
+      label: '콘솔 런타임 오류 없음',
+      passed: consoleErrorCount === 0,
+      expected: 'Console Error 또는 Runtime Error가 발생하지 않아야 함',
+      evidence: `Console Error ${consoleErrorCount}건`,
+    },
+    {
+      key: 'NETWORK_STABLE',
+      label: '네트워크 요청 정상 종료',
+      passed: networkFailureCount === 0,
+      expected: '요청 실패, 4xx/5xx, 타임아웃이 없어야 함',
+      evidence: `Network Failure ${networkFailureCount}건`,
+    },
+    {
+      key: 'NO_INFINITE_LOADING',
+      label: '로딩 상태 정지 없음',
+      passed: loadingIssueCount === 0,
+      expected: '로딩 UI가 멈추거나 무한 대기 상태로 남지 않아야 함',
+      evidence: `Loading/Timeout 의심 로그 ${loadingIssueCount}건`,
+    },
+  ]
+
+  const stateChecks = reportData.stateChecks?.length ? reportData.stateChecks : derivedStateChecks
+  const failedStateChecks = stateChecks.filter((check) => !check.passed)
+
+  const stateSignature = stateChecks
+    .map((check) => `${check.key}:${check.passed ? 'T' : 'F'}`)
+    .join(' / ')
+
+  const stateDecision =
+    criticalIssues.length > 0 || failedStateChecks.length > 0
+      ? 'Fail'
+      : warningIssues.length > 0
+        ? 'Warning'
+        : 'Pass'
+
+  const riskScore = Math.max(
+    100 -
+      criticalIssues.length * 20 -
+      warningIssues.length * 8 -
+      networkFailureCount * 5 -
+      loadingIssueCount * 7,
     0
   )
 
@@ -79,31 +194,42 @@ function Report() {
     description: issue.detail,
     location: reportData.targetUrl || '-',
     impact: issue.type === 'error' ? '사용자 동작 실패 가능성' : '잠재 오류 가능성',
+    recommendation:
+      issue.type === 'error'
+        ? '오류 직후 DOM 변화, 콘솔 로그, 네트워크 응답을 함께 확인해야 합니다.'
+        : '동일 액션을 반복 실행해 재현 가능성과 발생 조건을 추가 확인하는 것이 좋습니다.',
   }))
 
-  const actionLogs = logs.map((log) => `[${log.label}] ${log.message}`)
-
-  const consoleErrorCount = logs.filter((log) => log.label === 'Error').length
-  const networkFailureCount = logs.filter((log) => log.label === 'Network').length
-
-  const riskScore = Math.max(
-    100 - criticalIssues.length * 20 - warningIssues.length * 8 - networkFailureCount * 5,
-    0
-  )
+  const recommendations =
+    reportData.recommendations?.length
+      ? reportData.recommendations
+      : [
+          '오류가 발생한 액션 직후의 DOM snapshot을 저장하여 상태 변화 기준을 명확히 분리합니다.',
+          'Network Failure와 Console Error를 단독 로그가 아니라 직전 사용자 행동과 연결해 분석합니다.',
+          'T/F 상태 조합이 F로 바뀐 항목은 재현 테스트 대상으로 우선 분류합니다.',
+        ]
 
   const handleExportPDF = () => {
     const element = document.querySelector<HTMLElement>('.report-main')
     if (!element) return
 
+    element.classList.add('exporting')
+
     const opt = {
       margin: 0.5,
-      filename: `report_${reportData.testId}.pdf`,
+      filename: `report_${reportData.testId || 'scan'}.pdf`,
       image: { type: 'jpeg' as const, quality: 0.98 },
-      html2canvas: { scale: 2 },
+      html2canvas: { scale: 2, useCORS: true },
       jsPDF: { unit: 'in', format: 'a4', orientation: 'portrait' as const },
     }
 
-    html2pdf().set(opt).from(element).save()
+    html2pdf()
+      .set(opt)
+      .from(element)
+      .save()
+      .finally(() => {
+        element.classList.remove('exporting')
+      })
   }
 
   return (
@@ -125,10 +251,10 @@ function Report() {
           <div className="report-title-wrap">
             <h1 className="report-title">Bug Analysis Report</h1>
             <p className="report-subtitle">
-              {reportData.createdAt} 생성됨 · Test ID {reportData.testId}
+              {formatShortDate(reportData.createdAt)} 생성됨 · Test ID {reportData.testId || '-'}
             </p>
             <p className="report-subtitle">
-              대상 URL: {reportData.targetUrl} · 상태: {reportData.sessionStatus}
+              대상 URL: {reportData.targetUrl || '-'} · 상태: {reportData.sessionStatus || reportData.status || '-'}
             </p>
           </div>
 
@@ -155,17 +281,18 @@ function Report() {
                 <h2 className="panel-title">Executive Summary</h2>
                 <p className="panel-desc">이번 테스트 세션의 핵심 결과 요약</p>
               </div>
-              <span className="panel-badge">
-                {reportData.sessionStatus === 'completed' ? 'Completed' : reportData.sessionStatus}
+              <span className={`panel-badge ${stateDecision === 'Fail' ? 'is-danger' : ''}`}>
+                {stateDecision}
               </span>
             </div>
 
             <div className="overview-body">
               <p className="overview-text">
-                이번 테스트 세션에서는 <strong>{reportData.targetUrl}</strong> 를 기준으로 자동 탐색을
-                수행했습니다. 총 <strong>{logs.length}개의 로그</strong>가 수집되었고,
-                <strong> 치명 이슈 {criticalIssues.length}건</strong>,
-                <strong> 경고 이슈 {warningIssues.length}건</strong>이 탐지되었습니다.
+                이번 테스트 세션에서는 <strong>{reportData.targetUrl || '대상 URL'}</strong> 를 기준으로
+                자동 탐색을 수행했습니다. 단순히 오류 로그만 수집하는 방식이 아니라,
+                <strong> 액션 이후 DOM 상태 변화</strong>, <strong> 네트워크 응답</strong>,
+                <strong> 콘솔 오류</strong>, <strong> 로딩 지속 여부</strong>를 함께 확인해 T/F 상태 조합으로
+                오류 여부를 판단했습니다.
               </p>
 
               <div className="overview-points">
@@ -175,11 +302,11 @@ function Report() {
                 </div>
                 <div className="overview-point">
                   <span className="point-dot danger" />
-                  치명 이슈 {criticalIssues.length}건 탐지
+                  치명 이슈 {criticalIssues.length}건 · 실패 상태 조건 {failedStateChecks.length}건
                 </div>
                 <div className="overview-point">
                   <span className="point-dot warning" />
-                  경고 이슈 {warningIssues.length}건 탐지
+                  상태 조합: {stateSignature || '-'}
                 </div>
               </div>
             </div>
@@ -190,7 +317,12 @@ function Report() {
             <p className="panel-desc">현재 테스트 기준 종합 안정성 지표</p>
 
             <div className="score-ring-wrap">
-              <div className="score-ring">
+              <div
+                className="score-ring"
+                style={{
+                  background: `conic-gradient(#243247 0 ${riskScore}%, #e9edf3 ${riskScore}% 100%)`,
+                }}
+              >
                 <div className="score-ring-inner">
                   <strong>{riskScore}</strong>
                   <span>/ 100</span>
@@ -200,8 +332,8 @@ function Report() {
 
             <div className="score-meta">
               <div className="score-row">
-                <span>UI 안정성</span>
-                <strong>{Math.max(100 - criticalIssues.length * 20, 0)}</strong>
+                <span>UI/DOM 안정성</span>
+                <strong>{Math.max(100 - failedStateChecks.length * 15, 0)}</strong>
               </div>
               <div className="score-row">
                 <span>네트워크 응답성</span>
@@ -215,7 +347,110 @@ function Report() {
           </article>
         </section>
 
-        <section className="report-content-grid">
+        <section className="report-panel scan-panel">
+          <div className="panel-top">
+            <div>
+              <h2 className="panel-title">Scan Overview</h2>
+              <p className="panel-desc">report-scan 결과를 화면 보고용으로 정리한 영역</p>
+            </div>
+            <span className="panel-count">DOM-based</span>
+          </div>
+
+          <div className="scan-info-grid">
+            <div className="scan-info-card">
+              <span>시작 시간</span>
+              <strong>{formatShortDate(reportData.startedAt || reportData.createdAt)}</strong>
+            </div>
+            <div className="scan-info-card">
+              <span>종료 시간</span>
+              <strong>{formatShortDate(reportData.endedAt)}</strong>
+            </div>
+            <div className="scan-info-card">
+              <span>소요 시간</span>
+              <strong>{formatDuration(reportData.durationMs)}</strong>
+            </div>
+            <div className="scan-info-card">
+              <span>방문 페이지</span>
+              <strong>{reportData.visitedPageCount ?? '-'}</strong>
+            </div>
+            <div className="scan-info-card">
+              <span>총 액션</span>
+              <strong>{totalActionCount}</strong>
+            </div>
+            <div className="scan-info-card">
+              <span>실패 액션</span>
+              <strong>{failedActionCount}</strong>
+            </div>
+          </div>
+        </section>
+
+        <section className="report-content-grid report-content-grid-wide">
+          <article className="report-panel state-panel">
+            <div className="panel-top">
+              <div>
+                <h2 className="panel-title">DOM State Decision</h2>
+                <p className="panel-desc">액션 이후 화면 반응을 T/F 조건으로 판정</p>
+              </div>
+              <span className={`panel-count decision-${stateDecision.toLowerCase()}`}>{stateDecision}</span>
+            </div>
+
+            <div className="state-table">
+              <div className="state-table-head">
+                <span>Check</span>
+                <span>Result</span>
+                <span>Expected</span>
+                <span>Evidence</span>
+              </div>
+
+              {stateChecks.map((check) => (
+                <div className="state-table-row" key={check.key}>
+                  <span>{check.label}</span>
+                  <strong className={check.passed ? 'state-pass' : 'state-fail'}>
+                    {check.passed ? 'T' : 'F'}
+                  </strong>
+                  <span>{check.expected}</span>
+                  <span>{check.evidence}</span>
+                </div>
+              ))}
+            </div>
+          </article>
+
+          <aside className="report-side-stack decision-side-stack">
+            <article className="report-panel metrics-panel">
+              <h2 className="panel-title">System Metrics</h2>
+              <p className="panel-desc">세션 중 수집된 핵심 상태</p>
+
+              <div className="metric-item ok">
+                <span className="metric-mark">✓</span>
+                Session Status - {reportData.sessionStatus || reportData.status || '-'}
+              </div>
+              <div className="metric-item warn">
+                <span className="metric-mark">!</span>
+                Console Error Count - {consoleErrorCount}
+              </div>
+              <div className="metric-item danger">
+                <span className="metric-mark">↗</span>
+                Network Failure Count - {networkFailureCount}
+              </div>
+            </article>
+
+            <article className="report-panel recommendation-panel">
+              <h2 className="panel-title">Recommendations</h2>
+              <p className="panel-desc">추가 확인 및 개선 방향</p>
+
+              <div className="recommendation-list">
+                {recommendations.map((item, index) => (
+                  <div className="recommendation-item" key={`${item}-${index}`}>
+                    <span>{index + 1}</span>
+                    <p>{item}</p>
+                  </div>
+                ))}
+              </div>
+            </article>
+          </aside>
+        </section>
+
+        <section className="report-content-grid report-bottom-grid">
           <article className="report-panel issues-panel">
             <div className="panel-top">
               <div>
@@ -252,6 +487,10 @@ function Report() {
                       <span className="issue-impact-label">영향도</span>
                       <strong className="issue-impact-value">{issue.impact}</strong>
                     </div>
+                    <div className="issue-impact-row issue-recommendation-row">
+                      <span className="issue-impact-label">대응 방향</span>
+                      <strong className="issue-impact-value">{issue.recommendation}</strong>
+                    </div>
                   </div>
                 ))
               )}
@@ -259,39 +498,29 @@ function Report() {
           </article>
 
           <aside className="report-side-stack">
-            <article className="report-panel metrics-panel">
-              <h2 className="panel-title">System Metrics</h2>
-              <p className="panel-desc">세션 중 수집된 핵심 상태</p>
-
-              <div className="metric-item ok">
-                <span className="metric-mark">✓</span>
-                Session Status - {reportData.sessionStatus}
-              </div>
-              <div className="metric-item warn">
-                <span className="metric-mark">!</span>
-                Console Error Count - {consoleErrorCount}
-              </div>
-              <div className="metric-item danger">
-                <span className="metric-mark">↗</span>
-                Network Failure Count - {networkFailureCount}
-              </div>
-            </article>
-
             <article className="report-panel logs-panel">
-              <h2 className="panel-title">Action Timeline</h2>
-              <p className="panel-desc">탐색 흐름 로그 요약</p>
+              <div className="panel-top">
+                <div>
+                  <h2 className="panel-title">Action Timeline</h2>
+                  <p className="panel-desc">탐색 흐름 로그 요약</p>
+                </div>
+                <span className="panel-count">{logs.length} logs</span>
+              </div>
 
               <div className="timeline-list">
-                {actionLogs.length === 0 ? (
+                {logs.length === 0 ? (
                   <div className="timeline-item">
                     <span className="timeline-index">-</span>
                     <p className="timeline-text">수집된 로그가 없습니다.</p>
                   </div>
                 ) : (
-                  actionLogs.map((log, index) => (
-                    <div className="timeline-item" key={`${log}-${index}`}>
+                  logs.map((log, index) => (
+                    <div className="timeline-item" key={`${log.time}-${log.message}-${index}`}>
                       <span className="timeline-index">{index + 1}</span>
-                      <p className="timeline-text">{log}</p>
+                      <p className="timeline-text">
+                        <strong>[{log.label}]</strong> {log.message}
+                        {log.time ? <em>{log.time}</em> : null}
+                      </p>
                     </div>
                   ))
                 )}

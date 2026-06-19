@@ -42,6 +42,7 @@
 
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { apiUrl } from '../lib/api'
 import '../styles/signup.css'
 
 function Signup() {
@@ -70,7 +71,7 @@ function Signup() {
     }
 
     try {
-      const response = await fetch('/api/auth/signup', {
+      const response = await fetch(apiUrl('/api/auth/signup'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userName, email, password }),

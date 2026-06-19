@@ -2,6 +2,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useState } from 'react'
 import type { FormEvent } from 'react'
 import mainicon from '../assets/mainicon.png'
+import { apiUrl } from '../lib/api'
 import '../styles/home.css'
 
 type StoredUser = {
@@ -13,6 +14,7 @@ type StartTestResponse = {
   sessionId: string
   status: string
   error?: string
+  message?: string
 }
 
 function getStoredUser(): StoredUser | null {
@@ -39,7 +41,7 @@ function isValidHttpUrl(value: string) {
 }
 
 function Home() {
-  const [url, setUrl] = useState('http://localhost:8080/')
+  const [url, setUrl] = useState('')
   const [user, setUser] = useState<StoredUser | null>(() => getStoredUser())
   const [isStarting, setIsStarting] = useState(false)
   const [errorMessage, setErrorMessage] = useState('')
@@ -67,7 +69,7 @@ function Home() {
       console.log('[HOME] 테스트 시작 요청')
       console.log('[HOME] targetUrl =', trimmedUrl)
 
-      const response = await fetch('http://localhost:8081/api/test/start', {
+      const response = await fetch(apiUrl('/api/test/start'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -88,7 +90,7 @@ function Home() {
       }
 
       if (!response.ok) {
-        throw new Error(data?.error || '테스트 시작에 실패했습니다.')
+        throw new Error(data?.message || data?.error || '테스트 시작에 실패했습니다.')
       }
 
       if (!data?.sessionId) {
@@ -171,7 +173,7 @@ function Home() {
               <div className="search-label">URL</div>
               <input
                 type="text"
-                placeholder="http://localhost:8080/"
+                placeholder="http://localhost:3000/"
                 className="search-input"
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
@@ -201,10 +203,10 @@ function Home() {
             <button
               type="button"
               className="quick-chip"
-              onClick={() => setUrl('http://localhost:8080/')}
+              onClick={() => setUrl('http://localhost:3000/')}
               disabled={isStarting}
             >
-              localhost:8080
+              localhost:3000
             </button>
             <button
               type="button"
