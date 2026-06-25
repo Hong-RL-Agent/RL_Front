@@ -5,7 +5,7 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { apiUrl } from '../lib/api'
 import '../styles/monitor.css'
 
-type LogLabel = 'Navigate' | 'Action' | 'State' | 'Error' | 'Network'
+type LogLabel = 'Navigate' | 'Action' | 'State' | 'Error' | 'Network' | 'AI'
 
 type LiveLog = {
   time: string
@@ -31,6 +31,76 @@ type BackendEvent = {
   issueType?: 'error' | 'warning'
 }
 
+function readableActionName(raw: string) {
+  if (raw === 'initial_state') return '첫 화면을 확인했습니다'
+  return raw
+    .replace(/^click_/, '')
+    .replace(/^input_/, '')
+    .replace(/^press_enter_/, '')
+    .replace(/^viewport_/, '화면 크기 ')
+    .replace(/input not type button not type submit not type hidden textarea \d+/g, '입력칸')
+    .replace(/button \d+/g, '버튼')
+    .replace(/a \d+ nolabel/g, '이름 없는 링크')
+    .replace(/username|nombre de usuario/g, '아이디')
+    .replace(/password|contraseña/g, '비밀번호')
+    .replace(/login|ingresar/g, '로그인')
+    .replace(/signup|register|sign up/g, '회원가입')
+    .replace(/_/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function readableFinding(raw: string) {
+  if (!raw) return ''
+  if (raw.includes('ui_no_visible_reaction_after_click')) {
+    return '눌렀지만 화면 변화가 보이지 않았습니다.'
+  }
+  if (raw.includes('frontend_console_error')) {
+    return '브라우저 스크립트 오류가 감지됐습니다.'
+  }
+  if (raw.includes('backend_network_error') || raw.includes('backend_api_error')) {
+    return '네트워크 또는 API 요청 문제가 감지됐습니다.'
+  }
+  return raw.replace(/_/g, ' ')
+}
+
+function toUserMessage(label: LogLabel, message: string) {
+  const tickMatch = message.match(/\[TICK\s+(\d+)\]\s+action=([^,]+),\s+error=(true|false),\s+findings=(.*)$/)
+  if (tickMatch) {
+    const [, tick, action, hasError, findings] = tickMatch
+    const actionText = readableActionName(action)
+    if (hasError === 'true') {
+      return `${tick}단계: ${actionText}을(를) 시도했습니다. ${readableFinding(findings)}`
+    }
+    return `${tick}단계: ${actionText}을(를) 시도했고, 눈에 띄는 문제는 없었습니다.`
+  }
+
+  const aiMatch = message.match(/tick=(\d+), selected=([^,]+), type=([^,]+), candidates=(\d+), error=(true|false)(?:, findings=([^,]+))?/)
+  if (aiMatch) {
+    const [, tick, selected, , candidates, hasError, findings = ''] = aiMatch
+    const actionText = readableActionName(selected)
+    const prefix = `${tick}단계: ${candidates}개의 후보 중 ${actionText} 동작을 선택했습니다`
+    if (hasError === 'true') {
+      return `${prefix}. ${readableFinding(findings || 'A possible issue was found.')}`
+    }
+    return `${prefix}. 계속 탐색 중입니다.`
+  }
+
+  if (label === 'Navigate') return '자동 브라우저로 대상 사이트를 열고 있습니다.'
+  if (message.includes('Running Playwright')) return '실제 브라우저 탐색을 시작했습니다.'
+  if (message.includes('completed')) return '자동 탐색이 완료됐습니다.'
+  return message
+}
+
+function displayLogLabel(label: LogLabel) {
+  if (label === 'Action') return '동작'
+  if (label === 'Navigate') return '이동'
+  if (label === 'State') return '상태'
+  if (label === 'Error') return '문제'
+  if (label === 'Network') return '네트워크'
+  return '분석'
+}
+
 type ReportState = {
   createdAt: string
   testId: string
@@ -40,6 +110,13 @@ type ReportState = {
   logs: LiveLog[]
   issues: Issue[]
   sessionStatus: 'running' | 'paused' | 'completed' | 'failed'
+  startedAt: string
+  endedAt: string
+  durationMs: number
+  visitedPageCount: number
+  totalActionCount: number
+  successfulActionCount: number
+  failedActionCount: number
 }
 
 const sceneMeta: Record<
@@ -85,6 +162,8 @@ function Monitor() {
   const [hasCompleted, setHasCompleted] = useState(false)
   const [liveLogs, setLiveLogs] = useState<LiveLog[]>([])
   const [liveIssues, setLiveIssues] = useState<Issue[]>([])
+  const [screenshotUrl, setScreenshotUrl] = useState('')
+  const [currentSummary, setCurrentSummary] = useState('대상 사이트를 여는 중입니다.')
   const [sessionStatus, setSessionStatus] = useState<'running' | 'paused' | 'completed' | 'failed'>(
     'running'
   )
@@ -93,6 +172,7 @@ function Monitor() {
   const elapsedTimerRef = useRef<number | null>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
   const hasShownCompleteRef = useRef(false)
+  const sessionStartedAtRef = useRef(new Date())
 
   const isCompleted = hasCompleted || progress >= 100 || sessionStatus === 'completed'
 
@@ -167,21 +247,36 @@ function Monitor() {
 
         if (event.type === 'log') {
           const rawLabel = event.label || 'State'
+          if (rawLabel === 'Preview' && event.message) {
+            setScreenshotUrl(apiUrl(event.message))
+            return
+          }
+
           const mappedLabel: LogLabel =
             rawLabel === 'Action' ||
             rawLabel === 'State' ||
             rawLabel === 'Error' ||
             rawLabel === 'Network' ||
+            rawLabel === 'AI' ||
             rawLabel === 'Navigate'
               ? rawLabel
               : 'State'
+
+          const readableMessage = toUserMessage(mappedLabel, event.message || '')
+          if (mappedLabel === 'AI') {
+            setCurrentSummary(readableMessage)
+            return
+          }
+          if ((event.message || '').includes('[OUTPUT DIR]')) {
+            return
+          }
 
           setLiveLogs((prev) => [
             ...prev,
             {
               time: new Date().toLocaleTimeString(),
               label: mappedLabel,
-              message: event.message || '',
+              message: readableMessage,
             },
           ])
         }
@@ -194,8 +289,8 @@ function Monitor() {
             {
               id: prev.length + 1,
               type: issueType,
-              title: event.label || (issueType === 'warning' ? 'Warning' : 'Error'),
-              detail: event.message || '',
+              title: issueType === 'warning' ? '확인 필요' : '문제 발견',
+              detail: readableFinding(event.message || ''),
             },
           ])
 
@@ -254,6 +349,21 @@ function Monitor() {
     logs: liveLogs,
     issues: liveIssues,
     sessionStatus,
+    startedAt: sessionStartedAtRef.current.toISOString(),
+    endedAt: new Date().toISOString(),
+    durationMs: Date.now() - sessionStartedAtRef.current.getTime(),
+    visitedPageCount: new Set(
+      liveLogs
+        .map((log) => log.message.match(/https?:\/\/\S+/)?.[0])
+        .filter(Boolean)
+    ).size || 1,
+    totalActionCount: liveLogs.filter((log) => log.label === 'Action' || log.label === 'Navigate').length,
+    successfulActionCount: liveLogs.filter(
+      (log) =>
+        (log.label === 'Action' || log.label === 'Navigate') &&
+        !/눌렀지만|실패|오류|문제/.test(log.message)
+    ).length,
+    failedActionCount: liveLogs.filter((log) => /눌렀지만|실패|오류|문제/.test(log.message)).length,
   })
 
   useEffect(() => {
@@ -461,7 +571,23 @@ function Monitor() {
                       </div>
 
                       <div className="preview-video-body">
-                        {currentScene === 'home' && (
+                        <div className="live-inference-card">
+                          <div>
+                            <span className="live-inference-kicker">현재 탐색 상태</span>
+                            <strong>자동 브라우저가 실제 화면을 검사 중입니다</strong>
+                          </div>
+                          <p>{currentSummary}</p>
+                        </div>
+
+                        {screenshotUrl && (
+                          <img
+                            className="live-site-screenshot"
+                            src={screenshotUrl}
+                            alt="Current page captured by Playwright"
+                          />
+                        )}
+
+                        {!screenshotUrl && currentScene === 'home' && (
                           <div className="mock-home">
                             <div className="mock-home-hero" />
                             <div className="mock-home-card-row">
@@ -473,7 +599,7 @@ function Monitor() {
                           </div>
                         )}
 
-                        {currentScene === 'product' && (
+                        {!screenshotUrl && currentScene === 'product' && (
                           <div className="mock-product">
                             <div className="mock-product-gallery" />
                             <div className="mock-product-side">
@@ -485,7 +611,7 @@ function Monitor() {
                           </div>
                         )}
 
-                        {currentScene === 'cart' && (
+                        {!screenshotUrl && currentScene === 'cart' && (
                           <div className="mock-cart">
                             <h3>Your Cart</h3>
                             <div className="cart-demo-item">
@@ -500,7 +626,7 @@ function Monitor() {
                           </div>
                         )}
 
-                        {currentScene === 'checkout' && (
+                        {!screenshotUrl && currentScene === 'checkout' && (
                           <div className="mock-checkout">
                             <div className="checkout-title-row">
                               <h3>Checkout</h3>
@@ -586,7 +712,7 @@ function Monitor() {
                           <div className="log-time">{log.time}</div>
                           <div className="log-main">
                             <strong className={`log-label ${log.label.toLowerCase()}`}>
-                              [{log.label}]
+                              [{displayLogLabel(log.label)}]
                             </strong>
                             <div className="log-message">{log.message}</div>
                           </div>

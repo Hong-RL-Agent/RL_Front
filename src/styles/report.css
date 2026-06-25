@@ -340,6 +340,66 @@ button {
   margin-bottom: 18px;
 }
 
+.report-flow-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-bottom: 18px;
+}
+
+.flow-card-list {
+  display: grid;
+  gap: 12px;
+}
+
+.flow-card {
+  border: 1px solid #edf0f3;
+  border-radius: 16px;
+  background: #fcfcfd;
+  padding: 14px;
+}
+
+.flow-card > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.flow-card span {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.flow-card strong {
+  border-radius: 999px;
+  padding: 5px 9px;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.flow-card p {
+  margin: 0;
+  color: #334155;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.flow-card.ok strong {
+  background: #edf7f1;
+  color: #12805c;
+}
+
+.flow-card.warn strong {
+  background: #fff7ed;
+  color: #d97706;
+}
+
+.flow-card.neutral strong {
+  background: #f3f4f6;
+  color: #475569;
+}
+
 .scan-info-grid {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));

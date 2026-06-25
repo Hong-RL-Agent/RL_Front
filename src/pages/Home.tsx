@@ -69,10 +69,12 @@ function Home() {
       console.log('[HOME] 테스트 시작 요청')
       console.log('[HOME] targetUrl =', trimmedUrl)
 
+      const accessToken = localStorage.getItem('accessToken')
       const response = await fetch(apiUrl('/api/test/start'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
         },
         body: JSON.stringify({
           targetUrl: trimmedUrl,
@@ -117,6 +119,11 @@ function Home() {
 
   const handleLogout = () => {
     localStorage.removeItem('user')
+    localStorage.removeItem('accessToken')
+    localStorage.removeItem('refreshToken')
+    localStorage.removeItem('userName')
+    localStorage.removeItem('role')
+    localStorage.removeItem('userId')
     setUser(null)
     navigate('/')
   }

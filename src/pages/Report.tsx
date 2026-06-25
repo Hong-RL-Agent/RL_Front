@@ -35,7 +35,6 @@ type ReportState = {
   issues?: Issue[]
   sessionStatus?: 'running' | 'paused' | 'completed' | 'failed'
 
-  // report-scan HTML 쪽 데이터가 넘어올 경우를 위한 확장 필드
   startedAt?: string
   endedAt?: string
   durationMs?: number
@@ -62,13 +61,25 @@ function formatDuration(durationMs?: number) {
 function formatShortDate(value?: string) {
   if (!value) return '-'
 
-  // 2026. 6. 19. 같은 값은 그대로 사용
   if (value.includes('.')) return value
 
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return value
 
   return date.toLocaleDateString('ko-KR')
+}
+
+function hasAny(logs: LiveLog[], patterns: RegExp[]) {
+  return logs.some((log) => patterns.some((pattern) => pattern.test(log.message)))
+}
+
+function displayLogLabel(label: LogLabel) {
+  if (label === 'Action') return '동작'
+  if (label === 'Navigate') return '이동'
+  if (label === 'State' || label === 'DOM') return '상태'
+  if (label === 'Error' || label === 'Console') return '문제'
+  if (label === 'Network') return '네트워크'
+  return label
 }
 
 function Report() {
@@ -101,6 +112,15 @@ function Report() {
   ).length
 
   const actionLogCount = logs.filter((log) => log.label === 'Navigate' || log.label === 'Action').length
+  const loginAttempted = hasAny(logs, [/로그인/, /login/i, /ingresar/i])
+  const loginSucceeded =
+    loginAttempted &&
+    (hasAny(logs, [/search/i, /dashboard/i, /관리/, /메뉴/, /admin/i]) ||
+      logs.some((log) => /로그인/.test(log.message) && /눈에 띄는 문제는 없었습니다/.test(log.message)))
+  const signupAttempted = hasAny(logs, [/회원가입/, /sign up/i, /signup/i, /register/i])
+  const signupSucceeded =
+    signupAttempted &&
+    logs.some((log) => /(회원가입|sign up|signup|register)/i.test(log.message) && /눈에 띄는 문제는 없었습니다/.test(log.message))
 
   const successRequestCount = Math.max(
     reportData.successfulActionCount ?? actionLogCount - networkFailureCount,
@@ -209,6 +229,65 @@ function Report() {
           'T/F 상태 조합이 F로 바뀐 항목은 재현 테스트 대상으로 우선 분류합니다.',
         ]
 
+  const milestoneCards = [
+    {
+      title: '로그인 플로우',
+      status: loginSucceeded ? '성공' : loginAttempted ? '확인 필요' : '미시도',
+      detail: loginSucceeded
+        ? '로그인 입력과 버튼 동작 후 내부 화면으로 이동한 흐름이 확인됐습니다.'
+        : loginAttempted
+          ? '로그인은 시도됐지만 성공 화면 전환 근거가 충분하지 않습니다.'
+          : '이번 탐색에서는 로그인 플로우가 실행되지 않았습니다.',
+      tone: loginSucceeded ? 'ok' : loginAttempted ? 'warn' : 'neutral',
+    },
+    {
+      title: '회원가입 플로우',
+      status: signupSucceeded ? '성공' : signupAttempted ? '확인 필요' : '미발견',
+      detail: signupSucceeded
+        ? '회원가입 관련 동작이 정상 완료된 흐름이 확인됐습니다.'
+        : signupAttempted
+          ? '회원가입은 시도됐지만 완료 여부를 추가 확인해야 합니다.'
+          : '대상 사이트에서 회원가입 진입점이 탐색되지 않았습니다.',
+      tone: signupSucceeded ? 'ok' : signupAttempted ? 'warn' : 'neutral',
+    },
+    {
+      title: '핵심 화면 진입',
+      status: loginSucceeded || successRequestCount > 0 ? '진행됨' : '부족',
+      detail:
+        loginSucceeded || successRequestCount > 0
+          ? '사용자 액션 이후 다음 화면 또는 입력 가능한 화면이 이어서 탐색됐습니다.'
+          : '핵심 화면으로 이어지는 성공 흐름이 부족합니다.',
+      tone: loginSucceeded || successRequestCount > 0 ? 'ok' : 'warn',
+    },
+  ]
+
+  const backendChecks = [
+    {
+      title: 'Frontend to Backend API',
+      status: reportData.sessionStatus === 'completed' ? '정상' : '확인 필요',
+      detail: `세션 ${reportData.testId || '-'} 상태가 ${reportData.sessionStatus || reportData.status || '-'}로 전달됐습니다.`,
+      tone: reportData.sessionStatus === 'completed' ? 'ok' : 'warn',
+    },
+    {
+      title: 'Network Requests',
+      status: networkFailureCount === 0 ? '정상' : '문제 감지',
+      detail:
+        networkFailureCount === 0
+          ? '자동 탐색 중 네트워크 실패 이벤트가 보고되지 않았습니다.'
+          : `네트워크 실패로 분류된 이벤트가 ${networkFailureCount}건 있습니다.`,
+      tone: networkFailureCount === 0 ? 'ok' : 'warn',
+    },
+    {
+      title: 'Database / Evidence Storage',
+      status: logs.length > 0 ? '저장됨' : '확인 필요',
+      detail:
+        logs.length > 0
+          ? `세션 로그 ${logs.length}건이 리포트에 전달됐고, 원본 tick 데이터는 관리자 페이지에서 추적할 수 있습니다.`
+          : '저장된 로그 근거가 부족합니다.',
+      tone: logs.length > 0 ? 'ok' : 'warn',
+    },
+  ]
+
   const handleExportPDF = () => {
     const element = document.querySelector<HTMLElement>('.report-main')
     if (!element) return
@@ -237,10 +316,11 @@ function Report() {
       <header className="report-header">
         <button
           className="report-menu-button"
-          aria-label="뒤로가기"
-          onClick={() => navigate('/monitor')}
+          aria-label="처음으로 돌아가기"
+          title="처음으로 돌아가기"
+          onClick={() => navigate('/', { replace: true })}
         >
-          ☰
+          🏠
         </button>
 
         <div className="report-brand">J.A.W.S</div>
@@ -254,7 +334,8 @@ function Report() {
               {formatShortDate(reportData.createdAt)} 생성됨 · Test ID {reportData.testId || '-'}
             </p>
             <p className="report-subtitle">
-              대상 URL: {reportData.targetUrl || '-'} · 상태: {reportData.sessionStatus || reportData.status || '-'}
+              대상 URL: {reportData.targetUrl || '-'} · 상태:{' '}
+              {reportData.sessionStatus || reportData.status || '-'}
             </p>
           </div>
 
@@ -288,11 +369,11 @@ function Report() {
 
             <div className="overview-body">
               <p className="overview-text">
-                이번 테스트 세션에서는 <strong>{reportData.targetUrl || '대상 URL'}</strong> 를 기준으로
-                자동 탐색을 수행했습니다. 단순히 오류 로그만 수집하는 방식이 아니라,
+                이번 테스트 세션에서는 <strong>{reportData.targetUrl || '대상 URL'}</strong> 를
+                기준으로 자동 탐색을 수행했습니다. 단순히 오류 로그만 수집하는 방식이 아니라,
                 <strong> 액션 이후 DOM 상태 변화</strong>, <strong> 네트워크 응답</strong>,
-                <strong> 콘솔 오류</strong>, <strong> 로딩 지속 여부</strong>를 함께 확인해 T/F 상태 조합으로
-                오류 여부를 판단했습니다.
+                <strong> 콘솔 오류</strong>, <strong> 로딩 지속 여부</strong>를 함께 확인해 T/F
+                상태 조합으로 오류 여부를 판단했습니다.
               </p>
 
               <div className="overview-points">
@@ -384,6 +465,52 @@ function Report() {
           </div>
         </section>
 
+        <section className="report-content-grid report-flow-grid">
+          <article className="report-panel">
+            <div className="panel-top">
+              <div>
+                <h2 className="panel-title">User Flow Results</h2>
+                <p className="panel-desc">로그인, 회원가입, 핵심 화면 진입 여부를 사용자 관점으로 요약</p>
+              </div>
+              <span className="panel-count">{milestoneCards.length} checks</span>
+            </div>
+
+            <div className="flow-card-list">
+              {milestoneCards.map((item) => (
+                <div className={`flow-card ${item.tone}`} key={item.title}>
+                  <div>
+                    <span>{item.title}</span>
+                    <strong>{item.status}</strong>
+                  </div>
+                  <p>{item.detail}</p>
+                </div>
+              ))}
+            </div>
+          </article>
+
+          <article className="report-panel">
+            <div className="panel-top">
+              <div>
+                <h2 className="panel-title">Backend / Data Checks</h2>
+                <p className="panel-desc">API, 네트워크, DB 저장 경로의 상태 요약</p>
+              </div>
+              <span className="panel-count">{backendChecks.length} checks</span>
+            </div>
+
+            <div className="flow-card-list">
+              {backendChecks.map((item) => (
+                <div className={`flow-card ${item.tone}`} key={item.title}>
+                  <div>
+                    <span>{item.title}</span>
+                    <strong>{item.status}</strong>
+                  </div>
+                  <p>{item.detail}</p>
+                </div>
+              ))}
+            </div>
+          </article>
+        </section>
+
         <section className="report-content-grid report-content-grid-wide">
           <article className="report-panel state-panel">
             <div className="panel-top">
@@ -391,7 +518,9 @@ function Report() {
                 <h2 className="panel-title">DOM State Decision</h2>
                 <p className="panel-desc">액션 이후 화면 반응을 T/F 조건으로 판정</p>
               </div>
-              <span className={`panel-count decision-${stateDecision.toLowerCase()}`}>{stateDecision}</span>
+              <span className={`panel-count decision-${stateDecision.toLowerCase()}`}>
+                {stateDecision}
+              </span>
             </div>
 
             <div className="state-table">
@@ -518,7 +647,7 @@ function Report() {
                     <div className="timeline-item" key={`${log.time}-${log.message}-${index}`}>
                       <span className="timeline-index">{index + 1}</span>
                       <p className="timeline-text">
-                        <strong>[{log.label}]</strong> {log.message}
+                        <strong>[{displayLogLabel(log.label)}]</strong> {log.message}
                         {log.time ? <em>{log.time}</em> : null}
                       </p>
                     </div>

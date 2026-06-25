@@ -45,7 +45,7 @@ type IssueItem = {
   sessionId: string
   target: string
   detectedAt: string
-  status: 'Open' | 'Reviewed' | 'Resolved'
+  status: 'Open' | 'Reviewed' | 'Resolved' | 'Detected'
 }
 
 type LogCollectorItem = {
@@ -56,7 +56,38 @@ type LogCollectorItem = {
   updatedAt: string
 }
 
-type FilterKey = 'overview' | 'error' | 'log' | 'users'
+type TickItem = {
+  id: number
+  sessionId: string
+  targetUrl: string
+  runId: string
+  tick: number
+  status: string
+  capturedAt: string | null
+  actionId: string | null
+  actionType: string | null
+  actionLabel: string | null
+  candidateCount: number
+  executionSuccess: boolean | null
+  domChanged: boolean | null
+  networkEventsAdded: number
+  errorDetected: boolean
+  errorReasons: string | null
+  payload: string
+}
+
+type UserItem = {
+  id: number
+  userName: string
+  email: string
+  role: 'ADMIN' | 'USER'
+  createdAt: string
+  sessionCount: number
+  issueCount: number
+  tickCount: number
+}
+
+type FilterKey = 'overview' | 'error' | 'ticks' | 'log' | 'users'
 
 const emptySummary: SummaryResponse = {
   totalTests: 0,
@@ -104,6 +135,10 @@ function AdminDashboard() {
   const [activities, setActivities] = useState<ActivityItem[]>([])
   const [issues, setIssues] = useState<IssueItem[]>([])
   const [logCollectors, setLogCollectors] = useState<LogCollectorItem[]>([])
+  const [ticks, setTicks] = useState<TickItem[]>([])
+  const [tickTotal, setTickTotal] = useState(0)
+  const [selectedTickSession, setSelectedTickSession] = useState('')
+  const [users, setUsers] = useState<UserItem[]>([])
   const [errorMessage, setErrorMessage] = useState('')
   const [isLoading, setIsLoading] = useState(true)
   const [pendingSessionId, setPendingSessionId] = useState<string | null>(null)
@@ -113,20 +148,47 @@ function AdminDashboard() {
       setIsLoading(true)
       setErrorMessage('')
 
-      const [summaryData, sessionsData, activitiesData, issuesData, collectorsData] =
-        await Promise.all([
+      const tickPath = selectedTickSession
+        ? `/api/admin/ticks?sessionId=${encodeURIComponent(selectedTickSession)}`
+        : '/api/admin/ticks'
+      const [summaryResult, sessionsResult, activitiesResult, issuesResult, collectorsResult, ticksResult, usersResult] =
+        await Promise.allSettled([
           fetchJson<SummaryResponse>('/api/admin/summary'),
           fetchJson<{ sessions: SessionItem[] }>('/api/admin/sessions'),
           fetchJson<{ activities: ActivityItem[] }>('/api/admin/activities'),
           fetchJson<{ issues: IssueItem[] }>('/api/admin/issues'),
           fetchJson<{ collectors: LogCollectorItem[] }>('/api/admin/log-collectors'),
+          fetchJson<{ total: number; ticks: TickItem[] }>(tickPath),
+          fetchJson<{ users: UserItem[] }>('/api/admin/users'),
         ])
 
-      setSummary(summaryData)
-      setSessions(sessionsData.sessions)
-      setActivities(activitiesData.activities)
-      setIssues(issuesData.issues)
-      setLogCollectors(collectorsData.collectors)
+      if (summaryResult.status === 'fulfilled') setSummary(summaryResult.value)
+      if (sessionsResult.status === 'fulfilled') setSessions(sessionsResult.value.sessions)
+      if (activitiesResult.status === 'fulfilled') setActivities(activitiesResult.value.activities)
+      if (issuesResult.status === 'fulfilled') setIssues(issuesResult.value.issues)
+      if (collectorsResult.status === 'fulfilled') setLogCollectors(collectorsResult.value.collectors)
+      if (ticksResult.status === 'fulfilled') {
+        setTicks(ticksResult.value.ticks)
+        setTickTotal(ticksResult.value.total)
+      }
+      if (usersResult.status === 'fulfilled') setUsers(usersResult.value.users)
+
+      const failedResult = [
+        summaryResult,
+        sessionsResult,
+        activitiesResult,
+        issuesResult,
+        collectorsResult,
+        ticksResult,
+        usersResult,
+      ].find((result) => result.status === 'rejected')
+      if (failedResult?.status === 'rejected') {
+        setErrorMessage(
+          failedResult.reason instanceof Error
+            ? failedResult.reason.message
+            : 'Some admin data could not be loaded.'
+        )
+      }
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unable to load admin data.')
     } finally {
@@ -137,6 +199,28 @@ function AdminDashboard() {
   useEffect(() => {
     loadDashboard()
   }, [])
+
+  const loadTicks = async (sessionId: string) => {
+    try {
+      setErrorMessage('')
+      const path = sessionId
+        ? `/api/admin/ticks?sessionId=${encodeURIComponent(sessionId)}`
+        : '/api/admin/ticks'
+      const data = await fetchJson<{ total: number; ticks: TickItem[] }>(path)
+      setTicks(data.ticks)
+      setTickTotal(data.total)
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to load tick data.')
+    }
+  }
+
+  const formatTickPayload = (payload: string) => {
+    try {
+      return JSON.stringify(JSON.parse(payload), null, 2)
+    } catch {
+      return payload
+    }
+  }
 
   const filteredSessions = useMemo(() => {
     if (activeFilter !== 'error') return sessions
@@ -266,6 +350,12 @@ function AdminDashboard() {
             onClick={() => setActiveFilter('error')}
           >
             Error sessions
+          </button>
+          <button
+            className={`admin-filter-chip ${activeFilter === 'ticks' ? 'active' : ''}`}
+            onClick={() => setActiveFilter('ticks')}
+          >
+            Tick data
           </button>
           <button
             className={`admin-filter-chip ${activeFilter === 'log' ? 'active' : ''}`}
@@ -443,6 +533,90 @@ function AdminDashboard() {
           </section>
         )}
 
+        {activeFilter === 'ticks' && (
+          <section className="admin-single-section">
+            <article className="admin-panel">
+              <div className="admin-panel-head admin-tick-head">
+                <div>
+                  <h2 className="admin-panel-title">Collected tick data</h2>
+                  <p className="admin-panel-desc">
+                    State, selected action, DOM transition, network delta, and findings per tick.
+                  </p>
+                </div>
+                <div className="admin-tick-controls">
+                  <label htmlFor="admin-tick-session">Session</label>
+                  <select
+                    id="admin-tick-session"
+                    value={selectedTickSession}
+                    onChange={(event) => {
+                      const sessionId = event.target.value
+                      setSelectedTickSession(sessionId)
+                      void loadTicks(sessionId)
+                    }}
+                  >
+                    <option value="">All recent sessions</option>
+                    {sessions.map((session) => (
+                      <option key={session.sessionId} value={session.sessionId}>
+                        {session.targetUrl} · {session.sessionId.slice(0, 8)}
+                      </option>
+                    ))}
+                  </select>
+                  <span>{tickTotal} collected</span>
+                </div>
+              </div>
+
+              <div className="admin-tick-list">
+                {ticks.length === 0 && (
+                  <div className="admin-tick-empty">
+                    No tick data yet. Run a new test session to start collecting it.
+                  </div>
+                )}
+
+                {ticks.map((tick) => (
+                  <details
+                    className={`admin-tick-item ${tick.errorDetected ? 'has-error' : ''}`}
+                    key={tick.id}
+                  >
+                    <summary>
+                      <div className="admin-tick-identity">
+                        <span className="admin-tick-number">Tick {tick.tick}</span>
+                        <div>
+                          <strong>{tick.actionLabel || tick.actionType || 'Initial state'}</strong>
+                          <span>{tick.targetUrl}</span>
+                        </div>
+                      </div>
+                      <div className="admin-tick-metrics">
+                        <span className={`admin-tick-status ${tick.status}`}>{tick.status}</span>
+                        <span>{tick.candidateCount} candidates</span>
+                        <span>DOM {tick.domChanged == null ? '-' : tick.domChanged ? 'changed' : 'same'}</span>
+                        <span>{tick.networkEventsAdded} network</span>
+                        <span className={tick.errorDetected ? 'danger' : 'success'}>
+                          {tick.errorDetected ? 'Finding' : 'Clean'}
+                        </span>
+                      </div>
+                    </summary>
+
+                    <div className="admin-tick-detail">
+                      <div className="admin-tick-detail-grid">
+                        <span><strong>Session</strong>{tick.sessionId}</span>
+                        <span><strong>Run</strong>{tick.runId}</span>
+                        <span><strong>Captured</strong>{tick.capturedAt || '-'}</span>
+                        <span><strong>Action ID</strong>{tick.actionId || '-'}</span>
+                        <span>
+                          <strong>Execution</strong>
+                          {tick.executionSuccess == null ? '-' : tick.executionSuccess ? 'Success' : 'Failed'}
+                        </span>
+                        <span><strong>Reason</strong>{tick.errorReasons || '-'}</span>
+                      </div>
+                      <pre>{formatTickPayload(tick.payload)}</pre>
+                    </div>
+                  </details>
+                ))}
+              </div>
+            </article>
+          </section>
+        )}
+
         {activeFilter === 'log' && (
           <section className="admin-single-section">
             <article className="admin-panel">
@@ -481,20 +655,27 @@ function AdminDashboard() {
               <div className="admin-panel-head">
                 <div>
                   <h2 className="admin-panel-title">Users</h2>
-                  <p className="admin-panel-desc">User management is not expanded yet.</p>
+                  <p className="admin-panel-desc">All accounts and their persisted test data.</p>
                 </div>
               </div>
               <div className="admin-user-list">
-                <div className="admin-user-item">
-                  <div className="admin-user-main">
-                    <strong>Total registered users</strong>
-                    <span>{summary.activeUsers} account(s)</span>
+                {users.length === 0 && <div className="admin-user-item">No users in the database.</div>}
+                {users.map((user) => (
+                  <div className="admin-user-item" key={user.id}>
+                    <div className="admin-user-main">
+                      <strong>{user.userName}</strong>
+                      <span>{user.email} · joined {user.createdAt}</span>
+                    </div>
+                    <div className="admin-user-side">
+                      <span className={`admin-user-role ${user.role.toLowerCase()}`}>
+                        {user.role}
+                      </span>
+                      <span className="admin-user-state active">{user.sessionCount} sessions</span>
+                      <span className="admin-user-state issues">{user.issueCount} issues</span>
+                      <span className="admin-user-state ticks">{user.tickCount} ticks</span>
+                    </div>
                   </div>
-                  <div className="admin-user-side">
-                    <span className="admin-user-role admin">ADMIN</span>
-                    <span className="admin-user-state active">active</span>
-                  </div>
-                </div>
+                ))}
               </div>
             </article>
           </section>

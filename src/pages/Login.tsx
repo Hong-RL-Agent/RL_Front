@@ -58,7 +58,7 @@ function Login() {
         })
       )
 
-      navigate(data.role === 'ADMIN' ? '/admin' : '/')
+      navigate(data.role === 'ADMIN' ? '/admin/dashboard' : '/')
     } catch (error) {
       setErrorMessage('서버에 연결할 수 없습니다. 백엔드가 실행 중인지 확인해주세요.')
     } finally {

@@ -368,7 +368,7 @@
 
 .preview-video-frame {
   position: relative;
-  min-height: 560px;
+  min-height: 680px;
   border-radius: 24px;
   border: 1px solid #e8edf3;
   background: linear-gradient(180deg, #ffffff 0%, #f7f9fb 100%);
@@ -414,7 +414,57 @@
 }
 
 .preview-video-body {
-  padding: 16px 18px 18px;
+  padding: 16px 18px 20px;
+}
+
+.live-inference-card {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding: 14px;
+  border: 1px solid #dbe6ff;
+  border-radius: 16px;
+  background: #f7faff;
+  color: #22314b;
+}
+
+.live-inference-card > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.live-inference-kicker {
+  font-size: 11px;
+  font-weight: 800;
+  color: #356df3;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.live-inference-card strong {
+  font-size: 13px;
+  font-weight: 800;
+  color: #111827;
+}
+
+.live-inference-card p {
+  margin: 0;
+  color: #526074;
+  font-size: 13px;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.live-site-screenshot {
+  display: block;
+  width: 100%;
+  height: clamp(420px, 58vh, 640px);
+  object-fit: contain;
+  border: 1px solid #e5eaf2;
+  border-radius: 14px;
+  background: #ffffff;
 }
 
 .preview-lower-info {
