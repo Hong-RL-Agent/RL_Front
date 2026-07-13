@@ -101,6 +101,12 @@ function displayLogLabel(label: LogLabel) {
   return '분석'
 }
 
+function isFailedActionLog(log: LiveLog) {
+  return /success\s*=\s*false|action failed|execution failed|\bfailed\b|\berror\b|눌렀지만|실패|오류|문제/i.test(
+    log.message
+  )
+}
+
 type ReportState = {
   createdAt: string
   testId: string
@@ -361,9 +367,11 @@ function Monitor() {
     successfulActionCount: liveLogs.filter(
       (log) =>
         (log.label === 'Action' || log.label === 'Navigate') &&
-        !/눌렀지만|실패|오류|문제/.test(log.message)
+        !isFailedActionLog(log)
     ).length,
-    failedActionCount: liveLogs.filter((log) => /눌렀지만|실패|오류|문제/.test(log.message)).length,
+    failedActionCount: liveLogs.filter(
+      (log) => (log.label === 'Action' || log.label === 'Navigate') && isFailedActionLog(log)
+    ).length,
   })
 
   useEffect(() => {

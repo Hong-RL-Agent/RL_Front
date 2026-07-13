@@ -122,13 +122,12 @@ function Report() {
     signupAttempted &&
     logs.some((log) => /(회원가입|sign up|signup|register)/i.test(log.message) && /눈에 띄는 문제는 없었습니다/.test(log.message))
 
-  const successRequestCount = Math.max(
-    reportData.successfulActionCount ?? actionLogCount - networkFailureCount,
-    0
-  )
-
   const totalActionCount = reportData.totalActionCount ?? actionLogCount
-  const failedActionCount = reportData.failedActionCount ?? criticalIssues.length + networkFailureCount
+  const rawFailedActionCount = reportData.failedActionCount ?? networkFailureCount
+  const failedActionCount = Math.min(Math.max(rawFailedActionCount, 0), totalActionCount)
+  // Action outcomes are a partition: success + failure always equals total.
+  // Issue severity is independent because one action can reveal many issues.
+  const successRequestCount = totalActionCount - failedActionCount
 
   const derivedStateChecks: StateCheck[] = [
     {
@@ -190,7 +189,17 @@ function Report() {
   )
 
   const summaryCards = [
-    { label: '총 탐색 로그', value: String(logs.length).padStart(2, '0'), tone: 'neutral' },
+    { label: '총 실행 액션', value: String(totalActionCount).padStart(2, '0'), tone: 'neutral' },
+    {
+      label: '성공 액션',
+      value: String(successRequestCount).padStart(2, '0'),
+      tone: 'success',
+    },
+    {
+      label: '실패 액션',
+      value: String(failedActionCount).padStart(2, '0'),
+      tone: 'danger',
+    },
     {
       label: '탐지된 치명 이슈',
       value: String(criticalIssues.length).padStart(2, '0'),
@@ -200,11 +209,6 @@ function Report() {
       label: '경고 이슈',
       value: String(warningIssues.length).padStart(2, '0'),
       tone: 'warning',
-    },
-    {
-      label: '성공 액션 수',
-      value: String(successRequestCount).padStart(2, '0'),
-      tone: 'success',
     },
   ]
 
@@ -633,7 +637,7 @@ function Report() {
                   <h2 className="panel-title">Action Timeline</h2>
                   <p className="panel-desc">탐색 흐름 로그 요약</p>
                 </div>
-                <span className="panel-count">{logs.length} logs</span>
+                <span className="panel-count">{logs.length} event logs</span>
               </div>
 
               <div className="timeline-list">
