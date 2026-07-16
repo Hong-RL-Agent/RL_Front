@@ -65,6 +65,28 @@ function readableFinding(raw: string) {
 }
 
 function toUserMessage(label: LogLabel, message: string) {
+  const browserGymMatch = message.match(
+    /episode=(\d+), step=(\d+), action=([^,]+), success=(true|false), newState=(true|false), candidates=(\d+), anomalies=(\d+)(?:, url=(.*))?$/
+  )
+  if (browserGymMatch) {
+    const [, episode, tick, action, success, newState, candidates, anomalies, rawUrl = ''] = browserGymMatch
+    const actionNames: Record<string, string> = {
+      inspect_layout: '화면 배치 점검', fill_input: '입력란 작성', change_viewport_mobile: '모바일 화면 전환',
+      change_viewport_desktop: '데스크톱 화면 전환', inspect_console: '브라우저 오류 점검',
+      inspect_network: '네트워크 점검', click_element: '화면 요소 클릭', submit_form: '양식 제출',
+    }
+    const cleanUrl = rawUrl.replace(/;jsessionid=[^?&#]*/, '')
+    return [
+      `에피소드 ${episode} · Tick ${tick}`,
+      actionNames[action] || action.replace(/_/g, ' '),
+      success === 'true' ? '성공' : '실패',
+      newState === 'true' ? '새 화면/상태 발견' : '기존 상태 유지',
+      `실행 후보 ${candidates}개`,
+      Number(anomalies) > 0 ? `문제 ${anomalies}건` : '',
+      cleanUrl,
+    ].filter(Boolean).join(' · ')
+  }
+
   const tickMatch = message.match(/\[TICK\s+(\d+)\]\s+action=([^,]+),\s+error=(true|false),\s+findings=(.*)$/)
   if (tickMatch) {
     const [, tick, action, hasError, findings] = tickMatch
@@ -379,9 +401,10 @@ function Monitor() {
 
     navigateTimerRef.current = window.setTimeout(() => {
       setShowCompleteModal(false)
-
-      navigate('/report', {
-        state: buildReportState(),
+      const reportState = buildReportState()
+      window.sessionStorage.setItem(`jwas-report-${sessionId}`, JSON.stringify(reportState))
+      navigate(`/report?sessionId=${encodeURIComponent(sessionId)}`, {
+        state: reportState,
       })
     }, 2600)
 
@@ -435,9 +458,10 @@ function Monitor() {
     }
 
     setShowCompleteModal(false)
-
-    navigate('/report', {
-      state: buildReportState(),
+    const reportState = buildReportState()
+    window.sessionStorage.setItem(`jwas-report-${sessionId}`, JSON.stringify(reportState))
+    navigate(`/report?sessionId=${encodeURIComponent(sessionId)}`, {
+      state: reportState,
     })
   }
 
@@ -545,9 +569,6 @@ function Monitor() {
                         {isCompleted ? 'Completed' : isStopped ? 'Paused' : 'Live'}
                       </span>
                     </div>
-                    <p className="preview-shell-sub">
-                      추후 Playwright 실시간 탐색 화면이 이 영역에 연결됩니다.
-                    </p>
                   </div>
 
                   <div className="preview-head-meta">

@@ -1,5 +1,6 @@
 import { useLocation, useNavigate } from 'react-router-dom'
 import html2pdf from 'html2pdf.js'
+import TickPathGraph from '../components/TickPathGraph'
 import '../styles/report.css'
 
 type LogLabel = 'Navigate' | 'Action' | 'State' | 'Error' | 'Network' | 'DOM' | 'Console'
@@ -85,10 +86,21 @@ function displayLogLabel(label: LogLabel) {
 function Report() {
   const navigate = useNavigate()
   const location = useLocation()
+  const querySessionId = new URLSearchParams(location.search).get('sessionId') || ''
 
-  const reportData: ReportState = (location.state as ReportState | null) || {
+  const routeReportData = location.state as ReportState | null
+  let storedReportData: ReportState | null = null
+  if (!routeReportData && querySessionId) {
+    try {
+      const stored = window.sessionStorage.getItem(`jwas-report-${querySessionId}`)
+      storedReportData = stored ? JSON.parse(stored) as ReportState : null
+    } catch {
+      storedReportData = null
+    }
+  }
+  const reportData: ReportState = routeReportData || storedReportData || {
     createdAt: '2026.03.18',
-    testId: '123456789',
+    testId: querySessionId,
     targetUrl: '',
     status: 'completed',
     progress: 100,
@@ -468,6 +480,8 @@ function Report() {
             </div>
           </div>
         </section>
+
+        <TickPathGraph sessionId={reportData.testId} />
 
         <section className="report-content-grid report-flow-grid">
           <article className="report-panel">

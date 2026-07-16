@@ -614,6 +614,291 @@ button {
 }
 
 /* Bottom: Issues + Timeline */
+.tick-path-panel {
+  overflow: hidden;
+}
+
+.tick-path-head {
+  align-items: flex-start;
+}
+
+.tick-path-controls {
+  display: flex;
+  gap: 8px;
+}
+
+.tick-path-controls select,
+.tick-path-controls button {
+  min-height: 36px;
+  border: 1px solid #d0d5dd;
+  border-radius: 10px;
+  padding: 0 12px;
+  background: #fff;
+  color: #344054;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.tick-path-controls button.active {
+  border-color: #84adff;
+  background: #eff4ff;
+  color: #175cd3;
+}
+
+.tick-path-empty {
+  padding: 42px 20px;
+  border: 1px dashed #d0d5dd;
+  border-radius: 16px;
+  color: #667085;
+  text-align: center;
+}
+
+.tick-path-empty.error {
+  border-color: #fda29b;
+  background: #fffafa;
+  color: #b42318;
+}
+
+.tick-path-metrics {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.tick-path-metrics span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #f8fafc;
+  color: #667085;
+  font-size: 11px;
+}
+
+.tick-path-metrics strong {
+  color: #101828;
+  font-size: 18px;
+}
+
+.tick-path-canvas {
+  display: flex;
+  align-items: center;
+  min-height: 190px;
+  padding: 24px;
+  overflow-x: auto;
+  border: 1px solid #eaecf0;
+  border-radius: 18px;
+  background: linear-gradient(#f2f4f7 1px, transparent 1px),
+    linear-gradient(90deg, #f2f4f7 1px, transparent 1px), #fcfcfd;
+  background-size: 24px 24px;
+}
+
+.tick-path-step {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+}
+
+.tick-state-node {
+  position: absolute;
+  display: flex;
+  flex: 0 0 220px;
+  flex-direction: column;
+  gap: 5px;
+  width: 220px;
+  min-height: 112px;
+  border: 2px solid #b2ccff;
+  border-radius: 16px;
+  padding: 14px;
+  background: #fff;
+  color: #101828;
+  text-align: left;
+  box-shadow: 0 6px 16px rgba(16, 24, 40, 0.08);
+  cursor: pointer;
+}
+
+.tick-state-node.revisited::after {
+  content: '↻';
+  position: absolute;
+  top: -10px;
+  right: -10px;
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: #475467;
+  color: #fff;
+  font-size: 12px;
+}
+
+.tick-state-node.dimmed {
+  opacity: 0.18;
+}
+
+.tick-state-node.start { border-color: #84caff; }
+.tick-state-node.finding { border-color: #fda29b; background: #fffafa; }
+.tick-state-node.orphan { border-style: dashed; border-color: #f79009; background: #fffcf5; }
+.tick-state-node.selected { box-shadow: 0 0 0 4px rgba(47, 107, 255, 0.14); }
+
+.tick-state-node span,
+.tick-action-edge span {
+  color: #667085;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.tick-state-node strong {
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tick-state-node small {
+  display: -webkit-box;
+  overflow: hidden;
+  color: #667085;
+  font-size: 10px;
+  line-height: 1.4;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.tick-state-node em {
+  width: fit-content;
+  border-radius: 999px;
+  padding: 2px 7px;
+  background: #f2f4f7;
+  color: #475467;
+  font-size: 9px;
+  font-style: normal;
+}
+
+.tick-state-node .orphan-reason {
+  color: #b54708;
+  font-size: 9px;
+  line-height: 1.25;
+  white-space: normal;
+}
+
+.tick-path-warning {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid #fedf89;
+  border-radius: 10px;
+  background: #fffaeb;
+  color: #93370d;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.tick-action-edge {
+  display: flex;
+  flex: 0 0 130px;
+  flex-direction: column;
+  align-items: center;
+  width: 130px;
+  border: 0;
+  background: transparent;
+  color: #175cd3;
+  cursor: pointer;
+}
+
+.tick-action-edge strong {
+  width: 120px;
+  overflow: hidden;
+  font-size: 11px;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tick-action-edge i {
+  margin-top: 5px;
+  font-size: 28px;
+  font-style: normal;
+  line-height: 1;
+}
+
+.tick-action-edge.finding { color: #d92d20; }
+
+.tick-graph-scroll {
+  max-width: 100%;
+  overflow: auto;
+  border: 1px solid #eaecf0;
+  border-radius: 18px;
+  background: #fcfcfd;
+}
+
+.tick-graph-canvas {
+  position: relative;
+  min-width: 100%;
+  background: linear-gradient(#f2f4f7 1px, transparent 1px),
+    linear-gradient(90deg, #f2f4f7 1px, transparent 1px), #fcfcfd;
+  background-size: 24px 24px;
+}
+
+.tick-graph-edges {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+}
+
+.tick-graph-edge {
+  cursor: pointer;
+}
+
+.tick-graph-edge path {
+  fill: none;
+  stroke: #98a2b3;
+  stroke-width: 2;
+  transition: stroke 0.15s, stroke-width 0.15s;
+}
+
+.tick-graph-edge rect {
+  fill: #fff;
+  stroke: #d0d5dd;
+}
+
+.tick-graph-edge text {
+  fill: #475467;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.tick-graph-edge.finding path { stroke: #f04438; }
+.tick-graph-edge.finding rect { fill: #fff1f0; stroke: #fda29b; }
+.tick-graph-edge.finding text { fill: #b42318; }
+.tick-graph-edge.selected path { stroke: #2e68ff; stroke-width: 4; }
+.tick-graph-edge.selected rect { stroke: #84adff; }
+.tick-graph-edge marker path { fill: #98a2b3; }
+
+.tick-path-detail {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.tick-path-detail div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid #eaecf0;
+  border-radius: 12px;
+}
+
+.tick-path-detail span { color: #667085; font-size: 10px; }
+.tick-path-detail strong { color: #101828; font-size: 11px; overflow-wrap: anywhere; }
+.tick-path-detail strong.danger { color: #b42318; }
+
 .report-bottom-grid {
   align-items: start;
 }
@@ -825,6 +1110,10 @@ button {
   overflow: visible;
 }
 
+.report-main.exporting .tick-graph-scroll {
+  overflow: visible;
+}
+
 /* Responsive */
 @media (max-width: 1200px) {
   .report-summary-grid {
@@ -868,6 +1157,16 @@ button {
   .report-summary-grid,
   .scan-info-grid {
     grid-template-columns: 1fr;
+  }
+
+  .tick-path-metrics,
+  .tick-path-detail {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .tick-path-controls {
+    width: 100%;
+    flex-wrap: wrap;
   }
 
   .report-panel {

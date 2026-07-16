@@ -40,7 +40,13 @@ type ActivityItem = {
 
 type IssueItem = {
   id: number
-  severity: 'Critical' | 'Warning'
+  severity: 'Critical' | 'High' | 'Medium' | 'Low' | 'Informational' | 'Not Assessed'
+  riskScore: number | null
+  confidence: number | null
+  impact: number | null
+  likelihood: number | null
+  assessmentStatus: 'CONFIRMED' | 'SUSPECTED' | 'NEEDS_REVIEW' | 'NOT_OBSERVABLE' | 'SECURITY_EXCLUDED' | null
+  componentScores: string | null
   title: string
   sessionId: string
   target: string
@@ -88,6 +94,18 @@ type UserItem = {
 }
 
 type FilterKey = 'overview' | 'error' | 'ticks' | 'log' | 'users'
+type TickView = 'graph' | 'list'
+
+type TickTransition = {
+  key: number
+  tick: number
+  beforeTitle: string
+  beforeUrl: string
+  afterTitle: string
+  afterUrl: string
+  action: string
+  error: boolean
+}
 
 const emptySummary: SummaryResponse = {
   totalTests: 0,
@@ -103,6 +121,57 @@ const emptySummary: SummaryResponse = {
 function authHeaders() {
   const accessToken = localStorage.getItem('accessToken')
   return accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined
+}
+
+function toTickTransition(tick: TickItem): TickTransition {
+  try {
+    const payload = JSON.parse(tick.payload)
+    const before = payload.before || {}
+    const after = payload.after || {}
+    const action = payload.action || {}
+    return {
+      key: tick.id,
+      tick: tick.tick,
+      beforeTitle: before.title || 'Initial state',
+      beforeUrl: before.url || tick.targetUrl,
+      afterTitle: after.title || 'Captured state',
+      afterUrl: after.url || before.url || tick.targetUrl,
+      action: action.label || action.type || tick.actionLabel || tick.actionType || 'Observe',
+      error: tick.errorDetected,
+    }
+  } catch {
+    return {
+      key: tick.id,
+      tick: tick.tick,
+      beforeTitle: tick.tick === 0 ? 'Initial state' : `State ${Math.max(0, tick.tick - 1)}`,
+      beforeUrl: tick.targetUrl,
+      afterTitle: `State ${tick.tick}`,
+      afterUrl: tick.targetUrl,
+      action: tick.actionLabel || tick.actionType || 'Observe',
+      error: tick.errorDetected,
+    }
+  }
+}
+
+function assessmentLabel(status: IssueItem['assessmentStatus']) {
+  if (!status) return 'Legacy record'
+  return {
+    CONFIRMED: 'Confirmed',
+    SUSPECTED: 'Suspected',
+    NEEDS_REVIEW: 'Needs Review',
+    NOT_OBSERVABLE: 'Not Observable',
+    SECURITY_EXCLUDED: 'Security Excluded',
+  }[status]
+}
+
+function riskBreakdown(value: string | null) {
+  if (!value) return []
+  try {
+    const parsed = JSON.parse(value) as Record<string, number>
+    return Object.entries(parsed)
+  } catch {
+    return []
+  }
 }
 
 async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
@@ -138,6 +207,7 @@ function AdminDashboard() {
   const [ticks, setTicks] = useState<TickItem[]>([])
   const [tickTotal, setTickTotal] = useState(0)
   const [selectedTickSession, setSelectedTickSession] = useState('')
+  const [tickView, setTickView] = useState<TickView>('graph')
   const [users, setUsers] = useState<UserItem[]>([])
   const [errorMessage, setErrorMessage] = useState('')
   const [isLoading, setIsLoading] = useState(true)
@@ -228,6 +298,14 @@ function AdminDashboard() {
   }, [activeFilter, sessions])
 
   const visibleIssues = activeFilter === 'overview' || activeFilter === 'error' ? issues : []
+  const graphTransitions = useMemo(() => {
+    if (ticks.length === 0) return []
+    const latest = [...ticks].sort((a, b) => b.tick - a.tick)[0]
+    return ticks
+      .filter((tick) => tick.sessionId === latest.sessionId && tick.runId === latest.runId)
+      .sort((a, b) => a.tick - b.tick)
+      .map(toTickTransition)
+  }, [ticks])
 
   const stopSession = async (sessionId: string) => {
     try {
@@ -479,9 +557,7 @@ function AdminDashboard() {
                     <div className="admin-bug-row" key={issue.id}>
                       <div>
                         <span
-                          className={`admin-severity ${
-                            issue.severity === 'Critical' ? 'critical' : 'warning'
-                          }`}
+                          className={`admin-severity ${issue.severity.toLowerCase()}`}
                         >
                           {issue.severity}
                         </span>
@@ -492,6 +568,22 @@ function AdminDashboard() {
                         <span>
                           {issue.target} - {issue.detectedAt}
                         </span>
+                        <span className="admin-risk-meta">
+                          Risk {issue.riskScore ?? '-'}
+                          {issue.confidence == null
+                            ? ''
+                            : ` · confidence ${Math.round(issue.confidence * 100)}%`}
+                        </span>
+                        <span className={`admin-assessment ${issue.assessmentStatus?.toLowerCase() || 'legacy'}`}>
+                          {assessmentLabel(issue.assessmentStatus)}
+                        </span>
+                        {riskBreakdown(issue.componentScores).length > 0 && (
+                          <span className="admin-risk-breakdown">
+                            {riskBreakdown(issue.componentScores).map(([name, score]) => (
+                              <small key={name}>{name.replaceAll('_', ' ')} {score}</small>
+                            ))}
+                          </span>
+                        )}
                       </div>
 
                       <div className="admin-bug-session">{issue.sessionId}</div>
@@ -544,6 +636,14 @@ function AdminDashboard() {
                   </p>
                 </div>
                 <div className="admin-tick-controls">
+                  <div className="admin-tick-view-toggle" aria-label="Tick display mode">
+                    <button className={tickView === 'graph' ? 'active' : ''} onClick={() => setTickView('graph')}>
+                      Graph
+                    </button>
+                    <button className={tickView === 'list' ? 'active' : ''} onClick={() => setTickView('list')}>
+                      List
+                    </button>
+                  </div>
                   <label htmlFor="admin-tick-session">Session</label>
                   <select
                     id="admin-tick-session"
@@ -565,7 +665,31 @@ function AdminDashboard() {
                 </div>
               </div>
 
-              <div className="admin-tick-list">
+              {tickView === 'graph' && graphTransitions.length > 0 && (
+                <div className="admin-tick-graph" aria-label="Tick state transition graph">
+                  <div className="admin-state-node initial">
+                    <span>Start</span>
+                    <strong>{graphTransitions[0].beforeTitle}</strong>
+                    <small>{graphTransitions[0].beforeUrl}</small>
+                  </div>
+                  {graphTransitions.map((transition) => (
+                    <div className="admin-transition-step" key={transition.key}>
+                      <div className={`admin-action-edge ${transition.error ? 'has-error' : ''}`}>
+                        <span>Tick {transition.tick}</span>
+                        <strong>{transition.action}</strong>
+                        <i aria-hidden="true">↓</i>
+                      </div>
+                      <div className={`admin-state-node ${transition.error ? 'has-error' : ''}`}>
+                        <span>{transition.error ? 'Finding detected' : 'State'}</span>
+                        <strong>{transition.afterTitle}</strong>
+                        <small>{transition.afterUrl}</small>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {tickView === 'list' && <div className="admin-tick-list">
                 {ticks.length === 0 && (
                   <div className="admin-tick-empty">
                     No tick data yet. Run a new test session to start collecting it.
@@ -612,7 +736,7 @@ function AdminDashboard() {
                     </div>
                   </details>
                 ))}
-              </div>
+              </div>}
             </article>
           </section>
         )}
