@@ -284,6 +284,14 @@ function AdminDashboard() {
     }
   }
 
+  const openSessionTicks = async (sessionId: string) => {
+    setSelectedTickSession(sessionId)
+    setTickView('graph')
+    setActiveFilter('ticks')
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+    await loadTicks(sessionId)
+  }
+
   const formatTickPayload = (payload: string) => {
     try {
       return JSON.stringify(JSON.parse(payload), null, 2)
@@ -504,6 +512,11 @@ function AdminDashboard() {
 
                         <div className="admin-session-actions">
                           <button
+                            onClick={() => void openSessionTicks(session.sessionId)}
+                          >
+                            Tick detail
+                          </button>
+                          <button
                             onClick={() =>
                               navigate('/monitor', {
                                 state: {
@@ -513,7 +526,7 @@ function AdminDashboard() {
                               })
                             }
                           >
-                            Detail
+                            {session.status === 'RUNNING' ? 'Live' : 'Monitor'}
                           </button>
                           {session.status === 'RUNNING' ? (
                             <button
