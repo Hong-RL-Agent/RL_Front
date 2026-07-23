@@ -5,7 +5,15 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { apiUrl } from '../lib/api'
 import '../styles/monitor.css'
 
-type LogLabel = 'Navigate' | 'Action' | 'State' | 'Error' | 'Network' | 'AI'
+type LogLabel =
+  | 'Navigate'
+  | 'Action'
+  | 'State'
+  | 'Error'
+  | 'Warning'
+  | 'Automation'
+  | 'Network'
+  | 'AI'
 
 type LiveLog = {
   time: string
@@ -29,6 +37,14 @@ type BackendEvent = {
   progress?: number
   status?: 'running' | 'paused' | 'completed' | 'failed'
   issueType?: 'error' | 'warning'
+}
+
+type PreviewMeta = {
+  width: number
+  height: number
+  viewportWidth: number
+  viewportHeight: number
+  mode: 'full_page' | 'viewport'
 }
 
 function readableActionName(raw: string) {
@@ -64,7 +80,7 @@ function readableFinding(raw: string) {
   return raw.replace(/_/g, ' ')
 }
 
-function toUserMessage(label: LogLabel, message: string) {
+export function toUserMessage(label: LogLabel, message: string) {
   const browserGymMatch = message.match(
     /episode=(\d+), step=(\d+), action=([^,]+), success=(true|false), newState=(true|false), candidates=(\d+), anomalies=(\d+)(?:, url=(.*))?$/
   )
@@ -114,7 +130,181 @@ function toUserMessage(label: LogLabel, message: string) {
   return message
 }
 
-function displayLogLabel(label: LogLabel) {
+function toSimpleUserMessage(label: LogLabel, message: string) {
+  const text = message.toLowerCase()
+  const action =
+    message.match(/action=([^,\s]+)/i)?.[1] ||
+    message.match(/type=([^,\s]+)/i)?.[1] ||
+    ''
+  const context = `${text} ${action.toLowerCase()}`
+
+  if (/completed|complete|finished|finish_episode/.test(context)) {
+    return '사이트 테스트를 완료했습니다.'
+  }
+  if (/failed|failure|exception|error=true/.test(context) || label === 'Error') {
+    return '동작 중 문제를 발견해 원인을 확인하고 있습니다.'
+  }
+  if (/login|log-in|sign in|username|password|contrase|ingresar/.test(context)) {
+    return '로그인 기능을 테스트하고 있습니다.'
+  }
+  if (/signup|sign up|register|create account/.test(context)) {
+    return '회원가입 기능을 테스트하고 있습니다.'
+  }
+  if (/search|query/.test(context)) {
+    return '검색 기능을 테스트하고 있습니다.'
+  }
+  if (/(?:url=|https?:\/\/)[^,\s]*(?:\/cart|\/basket|\/checkout|\/payment)/.test(context)) {
+    return '현재 페이지의 구매 관련 기능을 확인하고 있습니다.'
+  }
+  if (/inspect_cart/.test(context)) {
+    return '현재 페이지에서 사용할 수 있는 기능을 확인하고 있습니다.'
+  }
+  if (/fill_input|input_|textbox|textarea/.test(context)) {
+    return '입력 항목이 정상적으로 동작하는지 확인하고 있습니다.'
+  }
+  if (/click_element|click_|button|link/.test(context)) {
+    return '버튼과 링크의 동작을 테스트하고 있습니다.'
+  }
+  if (/inspect_console|console/.test(context)) {
+    return '페이지 내부 오류가 있는지 확인하고 있습니다.'
+  }
+  if (/inspect_network|network|request|response|api/.test(context) || label === 'Network') {
+    return '서버 통신이 정상적인지 확인하고 있습니다.'
+  }
+  if (/inspect_layout|layout|viewport|screen/.test(context)) {
+    return '화면이 올바르게 표시되는지 확인하고 있습니다.'
+  }
+  if (/navigate|opening|target url|browser/.test(context) || label === 'Navigate') {
+    return '테스트할 웹페이지를 열고 있습니다.'
+  }
+  if (/state|dom|candidate|selected|tick|episode/.test(context) || label === 'State' || label === 'AI') {
+    return '페이지에서 다음 테스트 항목을 찾고 있습니다.'
+  }
+  return '웹페이지의 주요 기능을 테스트하고 있습니다.'
+}
+
+function findingConfidence(message: string) {
+  const value = Number(message.match(/confidence=([0-9.]+)/i)?.[1] || 0)
+  return Number.isFinite(value) ? value : 0
+}
+
+function humanizeFinding(message: string) {
+  const confidence = findingConfidence(message)
+  const confidenceText = confidence > 0 ? ` 신뢰도 ${Math.round(confidence * 100)}%.` : ''
+  const evidenceText = message.match(/evidence=(\{.*\})$/i)?.[1]
+  let evidence: Record<string, unknown> = {}
+
+  if (evidenceText) {
+    try {
+      evidence = JSON.parse(evidenceText) as Record<string, unknown>
+    } catch {
+      evidence = {}
+    }
+  }
+
+  if (/layout-overlap/i.test(message)) {
+    const count = Number(evidence.layout_overlap_count || evidence['layout overlap count'] || 0)
+    const viewportWidth = Number(evidence.viewport_width || evidence['viewport width'] || 0)
+    const viewportHeight = Number(evidence.viewport_height || evidence['viewport height'] || 0)
+    const viewport = viewportWidth && viewportHeight ? ` (${viewportWidth}×${viewportHeight} 화면)` : ''
+    return `일부 화면 요소가 서로 겹칠 가능성이 감지됐습니다${viewport}.${count ? ` 겹침 후보 ${count}개를 찾았습니다.` : ''}${confidenceText} 자동 탐지 결과이므로 화면에서 실제 겹침 여부를 확인해야 합니다.`
+  }
+
+  if (/broken-navigation/i.test(message)) {
+    const url = String(evidence.url || '')
+    const title = String(evidence.title || '')
+    return `링크 이동 후 오류 페이지가 표시됐습니다.${title ? ` 페이지 제목: “${title}”.` : ''}${url ? ` 확인 위치: ${url}.` : ''}${confidenceText}`
+  }
+
+  if (/duplicated-rendering/i.test(message)) {
+    const duplicated = (evidence.duplicated_titles || evidence['duplicated titles'] || {}) as Record<string, unknown>
+    const entries = Object.entries(duplicated)
+    const example = entries[0]
+    return `같은 제목이나 링크가 반복 렌더링된 정황을 발견했습니다.${example ? ` “${example[0]}” 항목이 ${example[1]}회 나타났습니다.` : ''}${confidenceText} 의도된 반복 목록인지 확인이 필요합니다.`
+  }
+
+  if (/frontend_console_error/i.test(message)) {
+    return `브라우저 스크립트 오류가 발생했습니다.${confidenceText} 개발자 콘솔과 해당 동작을 함께 확인해야 합니다.`
+  }
+  if (/backend_network_error|backend_api_error/i.test(message)) {
+    return `페이지가 서버 요청을 정상적으로 처리하지 못했습니다.${confidenceText} 실패한 API 응답을 확인해야 합니다.`
+  }
+
+  return `자동 탐색 중 확인이 필요한 동작을 발견했습니다.${confidenceText}`
+}
+
+function toDetailedUserMessage(label: LogLabel, message: string) {
+  if (label === 'Error' && /confidence=|evidence=/.test(message)) {
+    return humanizeFinding(message)
+  }
+
+  const step = message.match(
+    /episode=(\d+), step=(\d+), action=([^,]+), success=(true|false), newState=(true|false), candidates=(\d+), anomalies=(\d+)(?:, url=(.*))?$/i
+  )
+  if (step) {
+    const [, , , action, success, newState, , anomalies, rawUrl = ''] = step
+    const url = rawUrl.replace(/;jsessionid=[^?&#]*/, '')
+    const location = /login|signin|lookup/i.test(url) ? ' 해당 화면에서' : ''
+    const result =
+      success === 'false'
+        ? ' 실행에 실패해 원인을 확인하고 있습니다.'
+        : newState === 'true'
+          ? ' 실행 후 새로운 화면 또는 상태로 이동했습니다.'
+          : ' 실행 결과를 확인했으며 화면 상태는 유지됐습니다.'
+    const issue = Number(anomalies) > 0 ? ` 확인이 필요한 징후 ${anomalies}건도 발견했습니다.` : ''
+
+    const actionText: Record<string, string> = {
+      click_element: `${location} 버튼이나 링크를 클릭했습니다.`,
+      fill_input: `${location} 입력 항목에 테스트 값을 입력했습니다.`,
+      press_enter: `${location} 입력 내용을 제출했습니다.`,
+      inspect_layout: '화면 요소의 배치와 겹침 여부를 검사했습니다.',
+      inspect_console: '브라우저 내부 오류 기록을 검사했습니다.',
+      inspect_network: '페이지와 서버 사이의 요청·응답을 검사했습니다.',
+      inspect_dom: '현재 페이지의 구조와 사용 가능한 요소를 검사했습니다.',
+      scroll_down: '페이지 아래쪽으로 이동해 추가 내용을 확인했습니다.',
+      scroll_up: '페이지 위쪽으로 이동해 이전 내용을 다시 확인했습니다.',
+    }
+    return `${actionText[action] || '현재 페이지에서 기능 동작을 실행했습니다.'}${result}${issue}`
+  }
+
+  const tick = message.match(/\[TICK\s+\d+\]\s+action=([^,]+),\s+error=(true|false)/i)
+  if (tick) {
+    const [, action, failed] = tick
+    const actionName = action.replace(/_/g, ' ')
+    return failed === 'true'
+      ? `${actionName} 동작을 실행했지만 정상적으로 완료되지 않아 확인 중입니다.`
+      : `${actionName} 동작을 실행하고 결과를 확인했습니다.`
+  }
+
+  return toSimpleUserMessage(label, message)
+}
+
+function simpleLogLabel(label: LogLabel) {
+  if (label === 'Action') return '기능 테스트'
+  if (label === 'Navigate') return '페이지 이동'
+  if (label === 'State') return '화면 확인'
+  if (label === 'Error') return '기능 오류'
+  if (label === 'Warning') return '확인 필요'
+  if (label === 'Automation') return '자동화 실행 실패'
+  if (label === 'Network') return '통신 확인'
+  return '자동 분석'
+}
+
+function automationFailureMessage(message: string) {
+  const text = message.toLowerCase()
+  if (/timeout|timed out/.test(text)) {
+    return '정해진 시간 안에 대상 요소가 나타나지 않아 자동화 동작을 완료하지 못했습니다.'
+  }
+  if (/not visible|hidden|detached|no element|not found|selector/.test(text)) {
+    return '대상 요소를 찾을 수 없거나 화면에서 사라져 자동화 동작을 완료하지 못했습니다.'
+  }
+  if (/click|pointer|intercept/.test(text)) {
+    return '대상 요소를 클릭하지 못했습니다. 요소가 가려졌거나 위치가 변경됐을 수 있습니다.'
+  }
+  return 'Playwright가 이번 동작을 완료하지 못했습니다. 사이트 기능 오류와는 별도로 기록합니다.'
+}
+
+export function displayLogLabel(label: LogLabel) {
   if (label === 'Action') return '동작'
   if (label === 'Navigate') return '이동'
   if (label === 'State') return '상태'
@@ -191,6 +381,8 @@ function Monitor() {
   const [liveLogs, setLiveLogs] = useState<LiveLog[]>([])
   const [liveIssues, setLiveIssues] = useState<Issue[]>([])
   const [screenshotUrl, setScreenshotUrl] = useState('')
+  const [previewMeta, setPreviewMeta] = useState<PreviewMeta | null>(null)
+  const [previewLoadFailed, setPreviewLoadFailed] = useState(false)
   const [currentSummary, setCurrentSummary] = useState('대상 사이트를 여는 중입니다.')
   const [sessionStatus, setSessionStatus] = useState<'running' | 'paused' | 'completed' | 'failed'>(
     'running'
@@ -276,7 +468,17 @@ function Monitor() {
         if (event.type === 'log') {
           const rawLabel = event.label || 'State'
           if (rawLabel === 'Preview' && event.message) {
-            setScreenshotUrl(apiUrl(event.message))
+            const previewUrl = apiUrl(event.message)
+            const parsed = new URL(previewUrl, window.location.origin)
+            setPreviewMeta({
+              width: Number(parsed.searchParams.get('width') || 0),
+              height: Number(parsed.searchParams.get('height') || 0),
+              viewportWidth: Number(parsed.searchParams.get('viewportWidth') || 0),
+              viewportHeight: Number(parsed.searchParams.get('viewportHeight') || 0),
+              mode: parsed.searchParams.get('mode') === 'full_page' ? 'full_page' : 'viewport',
+            })
+            setPreviewLoadFailed(false)
+            setScreenshotUrl(previewUrl)
             return
           }
 
@@ -290,8 +492,17 @@ function Monitor() {
               ? rawLabel
               : 'State'
 
-          const readableMessage = toUserMessage(mappedLabel, event.message || '')
-          if (mappedLabel === 'AI') {
+          const originalMessage = event.message || ''
+          const isAutomationFailure =
+            mappedLabel === 'Error' &&
+            !/confidence=|evidence=|broken-navigation|layout-overlap|duplicated-rendering/i.test(
+              originalMessage
+            )
+          const displayLabel: LogLabel = isAutomationFailure ? 'Automation' : mappedLabel
+          const readableMessage = isAutomationFailure
+            ? automationFailureMessage(originalMessage)
+            : toDetailedUserMessage(displayLabel, originalMessage)
+          if (displayLabel === 'AI') {
             setCurrentSummary(readableMessage)
             return
           }
@@ -299,18 +510,30 @@ function Monitor() {
             return
           }
 
-          setLiveLogs((prev) => [
-            ...prev,
-            {
-              time: new Date().toLocaleTimeString(),
-              label: mappedLabel,
-              message: readableMessage,
-            },
-          ])
+          setLiveLogs((prev) => {
+            const previous = prev[prev.length - 1]
+            if (previous?.label === displayLabel && previous.message === readableMessage) {
+              return prev
+            }
+            return [
+              ...prev.slice(-29),
+              {
+                time: new Date().toLocaleTimeString(),
+                label: displayLabel,
+                message: readableMessage,
+              },
+            ]
+          })
         }
 
         if (event.type === 'issue') {
-          const issueType = event.issueType === 'warning' ? 'warning' : 'error'
+          const issueMessage = event.message || ''
+          const confidence = findingConfidence(issueMessage)
+          const issueType =
+            event.issueType === 'warning' || (confidence > 0 && confidence < 0.6)
+              ? 'warning'
+              : 'error'
+          const issueDetail = humanizeFinding(issueMessage)
 
           setLiveIssues((prev) => [
             ...prev,
@@ -318,7 +541,7 @@ function Monitor() {
               id: prev.length + 1,
               type: issueType,
               title: issueType === 'warning' ? '확인 필요' : '문제 발견',
-              detail: readableFinding(event.message || ''),
+              detail: issueDetail,
             },
           ])
 
@@ -328,7 +551,7 @@ function Monitor() {
               {
                 time: new Date().toLocaleTimeString(),
                 label: 'Network',
-                message: event.message || '',
+                message: issueDetail,
               },
             ])
           } else if (event.label === 'Error') {
@@ -336,8 +559,8 @@ function Monitor() {
               ...prev,
               {
                 time: new Date().toLocaleTimeString(),
-                label: 'Error',
-                message: event.message || '',
+                label: issueType === 'warning' ? 'Warning' : 'Error',
+                message: issueDetail,
               },
             ])
           }
@@ -609,11 +832,29 @@ function Monitor() {
                         </div>
 
                         {screenshotUrl && (
-                          <img
-                            className="live-site-screenshot"
-                            src={screenshotUrl}
-                            alt="Current page captured by Playwright"
-                          />
+                          <div
+                            className="live-site-screenshot-wrap"
+                            style={
+                              previewMeta?.width && previewMeta?.height
+                                ? {
+                                    aspectRatio: `${
+                                      previewMeta.viewportWidth || previewMeta.width
+                                    } / ${previewMeta.viewportHeight || previewMeta.height}`,
+                                  }
+                                : undefined
+                            }
+                          >
+                            <img
+                              className="live-site-screenshot"
+                              src={screenshotUrl}
+                              alt="Current page captured by Playwright"
+                              onLoad={() => setPreviewLoadFailed(false)}
+                              onError={() => setPreviewLoadFailed(true)}
+                            />
+                            {previewLoadFailed && (
+                              <div className="preview-frame-error">화면을 불러오지 못했습니다. 다음 프레임을 기다리는 중입니다.</div>
+                            )}
+                          </div>
                         )}
 
                         {!screenshotUrl && currentScene === 'home' && (
@@ -708,11 +949,19 @@ function Monitor() {
                     <div className="preview-lower-info">
                       <div className="preview-mini-stat">
                         <span className="preview-mini-label">Viewport</span>
-                        <strong>Mobile</strong>
+                        <strong>
+                          {previewMeta?.viewportWidth && previewMeta?.viewportHeight
+                            ? `${previewMeta.viewportWidth} × ${previewMeta.viewportHeight}`
+                            : '확인 중'}
+                        </strong>
                       </div>
                       <div className="preview-mini-stat">
-                        <span className="preview-mini-label">Detected State</span>
-                        <strong>{sceneMeta[currentScene].title}</strong>
+                        <span className="preview-mini-label">Capture</span>
+                        <strong>
+                          {previewMeta?.width && previewMeta?.height
+                            ? `${previewMeta.width} × ${previewMeta.height} · ${previewMeta.mode === 'full_page' ? 'Full page' : 'Viewport'}`
+                            : sceneMeta[currentScene].title}
+                        </strong>
                       </div>
                       <div className="preview-mini-stat">
                         <span className="preview-mini-label">Session Status</span>
@@ -728,7 +977,7 @@ function Monitor() {
               <div className="side-panel">
                 <section className="panel-section">
                   <div className="panel-section-head">
-                    <h3 className="panel-heading">Action Logs</h3>
+                    <h3 className="panel-heading">실시간 테스트 진행</h3>
                     <span className="section-count">{visibleLogs.length}</span>
                   </div>
 
@@ -741,7 +990,7 @@ function Monitor() {
                           <div className="log-time">{log.time}</div>
                           <div className="log-main">
                             <strong className={`log-label ${log.label.toLowerCase()}`}>
-                              [{displayLogLabel(log.label)}]
+                              [{simpleLogLabel(log.label)}]
                             </strong>
                             <div className="log-message">{log.message}</div>
                           </div>
@@ -793,7 +1042,7 @@ function Monitor() {
 
                 <section className="panel-section issue-section">
                   <div className="panel-section-head">
-                    <h3 className="panel-heading">Detected Issues</h3>
+                    <h3 className="panel-heading">탐지된 문제</h3>
                     <span className="section-count">{visibleIssues.length}</span>
                   </div>
 
@@ -808,7 +1057,7 @@ function Monitor() {
                         >
                           <div className="issue-card-top">
                             <span className="issue-badge">
-                              {issue.type === 'error' ? 'Critical' : 'Warning'}
+                              {issue.type === 'error' ? '중요 문제' : '확인 필요'}
                             </span>
                             <span className="issue-id">#{issue.id}</span>
                           </div>
